@@ -36,16 +36,25 @@ This project builds a complete USB HID force-feedback wheel stack around an STM3
 
 ### Firmware
 
+Default firmware target in this repo is the native USB HID build:
+
 ```powershell
 platformio run
 platformio run -t upload
 ```
 
-Native USB gamepad firmware for direct Windows/ETS2 detection:
+Explicit native USB gamepad firmware build for direct Windows/ETS2 detection:
 
 ```powershell
 platformio run -e nucleo_g431kb_usb_gamepad
 platformio run -e nucleo_g431kb_usb_gamepad -t upload
+```
+
+Legacy serial build remains available if you need it:
+
+```powershell
+platformio run -e nucleo_g431kb
+platformio run -e nucleo_g431kb -t upload
 ```
 
 ### Python app

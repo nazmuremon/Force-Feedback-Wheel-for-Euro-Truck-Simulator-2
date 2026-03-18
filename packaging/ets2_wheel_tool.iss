@@ -22,6 +22,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+Name: "vigemdriver"; Description: "Install virtual controller driver (ViGEmBus)"; GroupDescription: "Drivers:"; Flags: checkedonce
 
 [Files]
 Source: "..\dist\ETS2WheelTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -31,4 +32,6 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "msiexec.exe"; Parameters: "/i ""{app}\_internal\vgamepad\win\vigem\install\x64\ViGEmBusSetup_x64.msi"" /passive /norestart"; Description: "Install virtual controller driver"; Flags: postinstall shellexec waituntilterminated skipifsilent; Tasks: vigemdriver; Check: Is64BitInstallMode
+Filename: "msiexec.exe"; Parameters: "/i ""{app}\_internal\vgamepad\win\vigem\install\x86\ViGEmBusSetup_x86.msi"" /passive /norestart"; Description: "Install virtual controller driver"; Flags: postinstall shellexec waituntilterminated skipifsilent; Tasks: vigemdriver; Check: not Is64BitInstallMode
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

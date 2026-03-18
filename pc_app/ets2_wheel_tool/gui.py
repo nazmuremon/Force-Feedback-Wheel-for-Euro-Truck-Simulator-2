@@ -233,6 +233,17 @@ class MainWindow(QMainWindow):
     def _apply_motor_dir(self, value: float) -> float:
         return -value if self.profile.motor.invert_direction else value
 
+    def _set_manual_pwm(self, value: int) -> None:
+        if self.manual_torque_slider.value() != 0:
+            self.manual_torque_slider.setValue(0)
+        self.manual_pwm_slider.setValue(value)
+
+    def run_full_speed_motor(self, direction: int) -> None:
+        self._set_manual_pwm(self.manual_pwm_slider.maximum() * direction)
+
+    def stop_manual_motor_test(self) -> None:
+        self._set_manual_pwm(0)
+
     def _encoder_angle(self, count: int) -> float:
         angle = (count * 360.0 / max(1, self.profile.encoder.counts_per_rev)) + self.profile.encoder.center_offset_deg
         return -angle if self.profile.encoder.invert_direction else angle
@@ -475,7 +486,12 @@ class MainWindow(QMainWindow):
         spring_btn = QPushButton('Spring Test'); spring_btn.clicked.connect(lambda: self.device.set_spring(0.22, self.profile.encoder.center_offset_deg))
         damper_btn = QPushButton('Damper Test'); damper_btn.clicked.connect(lambda: self.device.set_damper(0.18))
         bump_btn = QPushButton('Bump Pulse'); bump_btn.clicked.connect(lambda: self.device.trigger_impulse(self._apply_motor_dir(0.2), 75))
+        full_fwd_btn = QPushButton('Full Speed Forward'); full_fwd_btn.clicked.connect(lambda: self.run_full_speed_motor(1))
+        full_rev_btn = QPushButton('Full Speed Reverse'); full_rev_btn.clicked.connect(lambda: self.run_full_speed_motor(-1))
+        stop_btn = QPushButton('Stop Motor'); stop_btn.clicked.connect(self.stop_manual_motor_test)
+        stop_btn.setStyleSheet('background: #b91c1c; color: white; border: none; border-radius: 8px; padding: 8px 12px;')
         buttons.addWidget(vib_btn); buttons.addWidget(spring_btn); buttons.addWidget(damper_btn); buttons.addWidget(bump_btn)
+        buttons.addWidget(full_fwd_btn); buttons.addWidget(full_rev_btn); buttons.addWidget(stop_btn)
         form.addRow(self.motor_enable_checkbox)
         form.addRow(self.motor_invert_checkbox)
         form.addRow('Manual Torque', self.manual_torque_slider)
@@ -576,8 +592,9 @@ class MainWindow(QMainWindow):
         bridge_box = QGroupBox('Real ETS2 Setup')
         bridge_layout = QVBoxLayout(bridge_box)
         bridge_hint = QLabel(
-            'For live Euro Truck Simulator 2 use, turn off Virtual test mode and run an ETS2 telemetry bridge '
-            'that exposes HTTP on 127.0.0.1:25555 before launching or driving the game.'
+            'For live Euro Truck Simulator 2 use, turn off Virtual test mode and launch ETS2 with the telemetry '
+            'plugin installed. This app will use the ETS2 shared-memory plugin path first and fall back to an '
+            'HTTP bridge on 127.0.0.1:25555 if available.'
         )
         bridge_hint.setWordWrap(True)
         bridge_layout.addWidget(bridge_hint)
@@ -679,7 +696,8 @@ class MainWindow(QMainWindow):
             self.telemetry_status_label.setStyleSheet('color: #4ade80;')
         else:
             self.telemetry_status_label.setText(
-                'Waiting for live ETS2 telemetry on 127.0.0.1:25555. FFB output is held at zero until the bridge is available.'
+                'Waiting for live ETS2 telemetry from the installed game plugin or an HTTP bridge on 127.0.0.1:25555. '
+                'FFB output is held at zero until telemetry is available.'
             )
             self.telemetry_status_label.setStyleSheet('color: #f87171;')
         controller_status = self.virtual_controller.status()

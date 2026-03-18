@@ -10,10 +10,20 @@ int g_target_pwm = 0;
 int g_applied_pwm = 0;
 float g_applied_torque = 0.0f;
 
+void setEnablePins(bool active) {
+  if (!app::kUseMotorEnablePins) {
+    return;
+  }
+
+  digitalWrite(app::kMotorEnableRPin, active ? HIGH : LOW);
+  digitalWrite(app::kMotorEnableLPin, active ? HIGH : LOW);
+}
+
 void writeOutputs(int pwm) {
   pwm = constrain(pwm, -app::kPwmClamp, app::kPwmClamp);
 
   if (!g_enabled || g_estop || pwm == 0) {
+    setEnablePins(false);
     analogWrite(app::kMotorRpwmPin, 0);
     analogWrite(app::kMotorLpwmPin, 0);
     g_applied_pwm = 0;
@@ -21,6 +31,7 @@ void writeOutputs(int pwm) {
     return;
   }
 
+  setEnablePins(true);
   const int magnitude = constrain(abs(pwm), 0, app::kPwmClamp);
   if (pwm > 0) {
     analogWrite(app::kMotorRpwmPin, magnitude);
@@ -47,8 +58,7 @@ void init() {
   if (app::kUseMotorEnablePins) {
     pinMode(app::kMotorEnableRPin, OUTPUT);
     pinMode(app::kMotorEnableLPin, OUTPUT);
-    digitalWrite(app::kMotorEnableRPin, HIGH);
-    digitalWrite(app::kMotorEnableLPin, HIGH);
+    setEnablePins(false);
   }
 
   stop();
@@ -65,7 +75,7 @@ void update() {
     g_applied_pwm = max(g_applied_pwm - app::kPwmRampPerControlTick, g_target_pwm);
   }
 
-  if (abs(g_applied_pwm) < app::kPwmDeadband) {
+  if (abs(g_target_pwm) < app::kPwmDeadband && abs(g_applied_pwm) < app::kPwmDeadband) {
     g_applied_pwm = 0;
   }
 

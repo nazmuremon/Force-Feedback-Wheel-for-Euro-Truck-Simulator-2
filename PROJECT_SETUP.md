@@ -15,7 +15,8 @@ This repo now targets a DIY Euro Truck Simulator 2 force-feedback wheel built ar
 - Encoder: `C38S6G5 2000Z`
 - Driver: `BTS7960`
 - Pedals: two `100k` potentiometers
-- PC link during development and normal use: built-in `ST-LINK` USB Virtual COM Port
+- Standard runtime PC link: native USB HID on `PA11/PA12`
+- Flashing and debug link: built-in `ST-LINK/V3E` USB
 
 ## Recommended bring-up order
 
@@ -43,6 +44,9 @@ If the game telemetry is not available, the app now keeps FFB output at zero in 
 
 ## Important note
 
-The repo keeps the safer serial architecture as the primary path, using the NUCLEO board's built-in `ST-LINK/V3E` USB connection for flashing, debugging, and COM-port communication.
+The standard project configuration in this repo is the native USB HID build. The STM32 exposes:
 
-Native `USB HID force-feedback wheel` mode is intentionally not the dependency for the first working system because it is much harder to implement robustly on Windows than the current PC-app-plus-serial approach.
+- a HID game controller for Windows and ETS2
+- a vendor-defined HID transport channel for the desktop app
+
+This uses one runtime USB cable on `PA11/PA12`, while the built-in `ST-LINK/V3E` USB remains the recommended path for flashing and debugging.

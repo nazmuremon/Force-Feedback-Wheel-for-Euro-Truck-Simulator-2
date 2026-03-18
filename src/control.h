@@ -18,6 +18,7 @@ enum FaultFlags : uint32_t {
 struct ControlEffects {
   bool motor_enabled;
   bool estop;
+  bool raw_pwm_override;
   float constant_torque;
   float spring_gain;
   float spring_center_deg;
@@ -28,6 +29,7 @@ struct ControlEffects {
   float impulse_torque;
   uint32_t impulse_expire_ms;
   float max_torque_limit;
+  int16_t raw_pwm;
 };
 
 struct ControlSnapshot {
@@ -50,5 +52,7 @@ ControlEffects& effects();
 void clearFaults();
 void zeroEncoder();
 void triggerImpulse(float torque, uint32_t duration_ms);
+void notifyMotorTestCommand();
+bool isMotorTestActive();
 
 }  // namespace control

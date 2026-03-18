@@ -40,6 +40,7 @@ constexpr int kPwmRampPerControlTick = 5;
 constexpr uint32_t kCommTimeoutMs = 250;
 constexpr uint32_t kStartupQuietTimeMs = 1500;
 constexpr uint32_t kImpulseTimeoutMs = 120;
+constexpr uint32_t kMotorTestLedHoldMs = 400;
 
 constexpr float kTorqueCommandLimit = 0.45f;
 constexpr float kTorqueFilterAlpha = 0.18f;

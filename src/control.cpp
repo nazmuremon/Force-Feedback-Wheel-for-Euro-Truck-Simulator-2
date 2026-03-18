@@ -6,6 +6,7 @@ namespace {
 
 ControlEffects g_effects{};
 uint32_t g_last_command_ms = 0;
+uint32_t g_last_motor_test_ms = 0;
 uint32_t g_fault_flags = FAULT_MOTOR_DISABLED;
 float g_output_torque = 0.0f;
 float g_filtered_torque = 0.0f;
@@ -22,8 +23,11 @@ namespace control {
 void init() {
   g_effects.motor_enabled = false;
   g_effects.estop = false;
+  g_effects.raw_pwm_override = false;
   g_effects.max_torque_limit = app::kTorqueCommandLimit;
+  g_effects.raw_pwm = 0;
   g_last_command_ms = millis();
+  g_last_motor_test_ms = 0;
   g_start_ms = millis();
 }
 
@@ -89,19 +93,25 @@ void updateControl() {
     torque = 0.0f;
   }
 
-  if ((g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ENCODER | FAULT_ESTOP)) != 0U) {
+  const bool output_blocked = (g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ENCODER | FAULT_ESTOP)) != 0U;
+  if (output_blocked) {
     torque = 0.0f;
     motor::setEnabled(false);
   } else {
     motor::setEnabled(g_effects.motor_enabled);
   }
 
-  g_filtered_torque += (torque - g_filtered_torque) * app::kTorqueFilterAlpha;
-  g_output_torque = g_filtered_torque;
-
   if (!g_effects.motor_enabled || (g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ESTOP)) != 0U) {
     motor::stop();
+    g_filtered_torque = 0.0f;
+    g_output_torque = 0.0f;
+  } else if (g_effects.raw_pwm_override) {
+    motor::setPwmRaw(g_effects.raw_pwm);
+    g_filtered_torque = static_cast<float>(g_effects.raw_pwm) / static_cast<float>(app::kPwmClamp);
+    g_output_torque = g_filtered_torque;
   } else {
+    g_filtered_torque += (torque - g_filtered_torque) * app::kTorqueFilterAlpha;
+    g_output_torque = g_filtered_torque;
     motor::setTorque(g_output_torque);
   }
 
@@ -133,5 +143,9 @@ void triggerImpulse(float torque, uint32_t duration_ms) {
   g_effects.impulse_torque = clampSigned(torque, app::kTorqueCommandLimit);
   g_effects.impulse_expire_ms = millis() + min(duration_ms, app::kImpulseTimeoutMs);
 }
+
+void notifyMotorTestCommand() { g_last_motor_test_ms = millis(); }
+
+bool isMotorTestActive() { return (millis() - g_last_motor_test_ms) <= app::kMotorTestLedHoldMs; }
 
 }  // namespace control

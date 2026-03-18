@@ -62,7 +62,10 @@ void loop() {
     g_last_control_us = now_us;
     control::updateControl();
     const ControlSnapshot snapshot = control::getSnapshot();
-    if (snapshot.fault_flags == FAULT_NONE) {
+    if (control::isMotorTestActive()) {
+      digitalWrite(app::kStatusLedPin, HIGH);
+      g_fault_led_state = false;
+    } else if (snapshot.fault_flags == FAULT_NONE) {
       digitalWrite(app::kStatusLedPin, encoder::isMoving() ? HIGH : LOW);
       g_fault_led_state = false;
     } else {

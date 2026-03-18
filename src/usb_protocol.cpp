@@ -130,7 +130,9 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_CONSTANT: {
       float value = 0.0f;
       if (readPayload(payload, length, value)) {
+        effects.raw_pwm_override = false;
         effects.constant_torque = value;
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;
@@ -141,8 +143,10 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
         float center_deg;
       } spring{};
       if (readPayload(payload, length, spring)) {
+        effects.raw_pwm_override = false;
         effects.spring_gain = spring.gain;
         effects.spring_center_deg = spring.center_deg;
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;
@@ -150,7 +154,9 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_DAMPER: {
       float value = 0.0f;
       if (readPayload(payload, length, value)) {
+        effects.raw_pwm_override = false;
         effects.damper_gain = value;
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;
@@ -158,7 +164,9 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_FRICTION: {
       float value = 0.0f;
       if (readPayload(payload, length, value)) {
+        effects.raw_pwm_override = false;
         effects.friction_gain = value;
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;
@@ -169,8 +177,10 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
         float frequency_hz;
       } vibration{};
       if (readPayload(payload, length, vibration)) {
+        effects.raw_pwm_override = false;
         effects.vibration_gain = vibration.gain;
         effects.vibration_freq_hz = vibration.frequency_hz;
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;
@@ -181,7 +191,9 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
         uint16_t duration_ms;
       } impulse{};
       if (readPayload(payload, length, impulse)) {
+        effects.raw_pwm_override = false;
         control::triggerImpulse(impulse.torque, impulse.duration_ms);
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;
@@ -189,7 +201,9 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_PWM_RAW: {
       int16_t pwm = 0;
       if (readPayload(payload, length, pwm)) {
-        motor::setPwmRaw(pwm);
+        effects.raw_pwm_override = true;
+        effects.raw_pwm = pwm;
+        control::notifyMotorTestCommand();
         sendAck(sequence, command);
       }
       return;

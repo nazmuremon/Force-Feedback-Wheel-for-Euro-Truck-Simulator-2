@@ -88,6 +88,9 @@ class DeviceManager(QObject):
         now = time.perf_counter()
         if (now - self._last_status_request_at) < self._STATUS_INTERVAL_S:
             return
+        # HID feature-report status polling does not touch the firmware command timer,
+        # so keep a lightweight ping flowing while the app is connected.
+        self.transport.send(protocol.CMD_PING)
         self.transport.send(protocol.CMD_REQUEST_STATUS)
         self._last_status_request_at = now
 
