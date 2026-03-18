@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Night Run</title>
+    <style>
+      :root {
+        --bg-top: #07101a;
+        --bg-mid: #0e1730;
+        --bg-low: #18101e;
+        --panel: rgba(8, 12, 22, 0.8);
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --text: #f6f4ed;
+        --muted: #a1afc4;
+        --cyan: #58d7ff;
+        --mint: #81f5d3;
+        --rose: #ff7a89;
+        --gold: #ffd76a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        color: var(--text);
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 15% 16%, rgba(88, 215, 255, 0.14), transparent 22%),
+          radial-gradient(circle at 82% 18%, rgba(129, 245, 211, 0.12), transparent 20%),
+          radial-gradient(circle at 70% 84%, rgba(255, 122, 137, 0.12), transparent 20%),
+          linear-gradient(160deg, var(--bg-top), var(--bg-mid) 56%, var(--bg-low));
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: radial-gradient(circle at center, black, transparent 80%);
+      }
+
+      .shell {
+        width: min(1100px, calc(100vw - 24px));
+        display: grid;
+        gap: 16px;
+      }
+
+      .hud {
+        display: grid;
+        grid-template-columns: 1.8fr repeat(4, 1fr);
+        gap: 12px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 22px;
+        padding: 16px 18px;
+        backdrop-filter: blur(16px);
+        box-shadow: 0 18px 38px rgba(0, 0, 0, 0.24);
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 0.76rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .title {
+        margin: 0;
+        font-size: clamp(1.7rem, 3vw, 2.9rem);
+        line-height: 0.98;
+      }
+
+      .subtle {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 0.97rem;
+        line-height: 1.5;
+      }
+
+      .metric {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 118px;
+      }
+
+      .metric-value {
+        font-size: clamp(1.55rem, 2.8vw, 2.5rem);
+        font-weight: 700;
+      }
+
+      .arena-card {
+        position: relative;
+        padding: 18px;
+      }
+
+      .arena-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 18px rgba(129, 245, 211, 0.6);
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 26px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+          0 14px 34px rgba(0, 0, 0, 0.24);
+        cursor: none;
+      }
+
+      .overlay {
+        position: absolute;
+        inset: 78px 18px 18px;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      .overlay.hidden {
+        opacity: 0;
+      }
+
+      .overlay-panel {
+        max-width: 520px;
+        padding: 26px 30px;
+        border-radius: 28px;
+        text-align: center;
+        background: rgba(5, 10, 18, 0.86);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        box-shadow: 0 24px 50px rgba(0, 0, 0, 0.3);
+      }
+
+      .overlay-title {
+        margin: 0 0 10px;
+        font-size: clamp(2rem, 3vw, 3rem);
+      }
+
+      .overlay-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      code {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+        padding: 2px 8px;
+        border-radius: 8px;
+      }
+
+      @media (max-width: 980px) {
+        .hud {
+          grid-template-columns: 1fr 1fr 1fr;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .shell {
+          width: min(100vw - 12px, 1100px);
+        }
+
+        .hud {
+          grid-template-columns: 1fr;
+        }
+
+        .arena-top {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hud">
+        <article class="card">
+          <p class="eyebrow">Night Run</p>
+          <h1 class="title">2D highway racer for vertical mouse steering</h1>
+          <p class="subtle">
+            Your car stays near the left side while the highway rushes past.
+            Move up and down to change lanes, avoid traffic, grab fuel cells,
+            and hit boost gates for short speed bursts.
+          </p>
+        </article>
+
+        <article class="card metric">
+          <p class="eyebrow">Distance</p>
+          <div class="metric-value" id="score">0</div>
+        </article>
+
+        <article class="card metric">
+          <p class="eyebrow">Best</p>
+          <div class="metric-value" id="best">0</div>
+        </article>
+
+        <article class="card metric">
+          <p class="eyebrow">Fuel</p>
+          <div class="metric-value" id="fuel">100</div>
+        </article>
+
+        <article class="card metric">
+          <p class="eyebrow">Speed</p>
+          <div class="metric-value" id="speed">1.0x</div>
+        </article>
+      </section>
+
+      <section class="card arena-card">
+        <div class="arena-top">
+          <div class="pill">
+            <span class="dot"></span>
+            <span id="statusText">Move anywhere on the page to start</span>
+          </div>
+          <div class="pill">Fallback: <code>ArrowUp</code> / <code>ArrowDown</code></div>
+        </div>
+
+        <canvas id="game" width="1000" height="580"></canvas>
+
+        <div class="overlay" id="overlay">
+          <div class="overlay-panel">
+            <h2 class="overlay-title" id="overlayTitle">Ignition On</h2>
+            <p class="overlay-copy" id="overlayCopy">
+              Move the mouse up and down to slide between lanes. Avoid traffic,
+              collect the glowing fuel cells, and drive through cyan boost gates.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <p class="footer">
+        Global mouse tracking is enabled, so your encoder-controlled cursor can
+        leave the canvas without breaking steering.
+      </p>
+    </main>
+
+    <script>
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+
+      const overlay = document.getElementById("overlay");
+      const overlayTitle = document.getElementById("overlayTitle");
+      const overlayCopy = document.getElementById("overlayCopy");
+      const statusText = document.getElementById("statusText");
+      const scoreNode = document.getElementById("score");
+      const bestNode = document.getElementById("best");
+      const fuelNode = document.getElementById("fuel");
+      const speedNode = document.getElementById("speed");
+
+      const STORAGE_KEY = "night-run-best";
+      const ROAD_LEFT = 120;
+      const ROAD_RIGHT = 920;
+      const LANE_COUNT = 4;
+      const LANE_HEIGHT = 104;
+      const ROAD_TOP = 82;
+      const ROAD_BOTTOM = ROAD_TOP + LANE_COUNT * LANE_HEIGHT;
+      const PLAYER_X = 220;
+      const PLAYER_WIDTH = 82;
+      const PLAYER_HEIGHT = 42;
+
+      const state = {
+        running: false,
+        gameOver: false,
+        score: 0,
+        best: Number.parseInt(localStorage.getItem(STORAGE_KEY) || "0", 10) || 0,
+        fuel: 100,
+        speedFactor: 1,
+        boostTimer: 0,
+        roadOffset: 0,
+        targetY: ROAD_TOP + LANE_HEIGHT / 2,
+        playerY: ROAD_TOP + LANE_HEIGHT / 2,
+        traffic: [],
+        pickups: [],
+        boostGates: [],
+        particles: [],
+        stars: [],
+        trafficSpawnTimer: 0,
+        fuelSpawnTimer: 0,
+        gateSpawnTimer: 0,
+        lastTime: 0,
+        restartDelayUntil: 0,
+      };
+
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function randomRange(min, max) {
+        return min + Math.random() * (max - min);
+      }
+
+      function laneCenter(index) {
+        return ROAD_TOP + (index * LANE_HEIGHT) + LANE_HEIGHT / 2;
+      }
+
+      function laneFromY(y) {
+        return clamp(Math.round((y - ROAD_TOP - LANE_HEIGHT / 2) / LANE_HEIGHT), 0, LANE_COUNT - 1);
+      }
+
+      function syncHud() {
+        scoreNode.textContent = String(Math.floor(state.score));
+        bestNode.textContent = String(state.best);
+        fuelNode.textContent = String(Math.floor(state.fuel));
+        speedNode.textContent = `${state.speedFactor.toFixed(1)}x`;
+      }
+
+      function setStatus(text) {
+        statusText.textContent = text;
+      }
+
+      function setOverlay(title, copy, visible) {
+        overlayTitle.textContent = title;
+        overlayCopy.textContent = copy;
+        overlay.classList.toggle("hidden", !visible);
+      }
+
+      function storeBest() {
+        localStorage.setItem(STORAGE_KEY, String(state.best));
+      }
+
+      function createStars() {
+        state.stars = [];
+        for (let i = 0; i < 70; i += 1) {
+          state.stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            speed: randomRange(18, 90),
+            size: randomRange(1, 3.2),
+            alpha: randomRange(0.08, 0.42),
+          });
+        }
+      }
+
+      function addParticleBurst(x, y, color, count) {
+        for (let i = 0; i < count; i += 1) {
+          const life = randomRange(0.24, 0.7);
+          state.particles.push({
+            x,
+            y,
+            vx: randomRange(-220, 220),
+            vy: randomRange(-220, 220),
+            size: randomRange(2, 6),
+            color,
+            life,
+            maxLife: life,
+          });
+        }
+      }
+
+      function resetGame() {
+        state.running = false;
+        state.gameOver = false;
+        state.score = 0;
+        state.fuel = 100;
+        state.speedFactor = 1;
+        state.boostTimer = 0;
+        state.roadOffset = 0;
+        state.targetY = laneCenter(1);
+        state.playerY = laneCenter(1);
+        state.traffic = [];
+        state.pickups = [];
+        state.boostGates = [];
+        state.particles = [];
+        state.trafficSpawnTimer = 0.75;
+        state.fuelSpawnTimer = 2.5;
+        state.gateSpawnTimer = 4.8;
+        state.restartDelayUntil = 0;
+        syncHud();
+        setStatus("Move anywhere on the page to start");
+        setOverlay(
+          "Ignition On",
+          "Steer up and down through traffic. Fuel cells refill your tank and boost gates give a short burst of speed.",
+          true
+        );
+      }
+
+      function startGame() {
+        if (state.gameOver) {
+          resetGame();
+        }
+        if (!state.running) {
+          state.running = true;
+          setStatus("Running");
+          setOverlay("", "", false);
+        }
+      }
+
+      function gameOver(reason) {
+        if (state.gameOver) {
+          return;
+        }
+
+        state.running = false;
+        state.gameOver = true;
+        state.best = Math.max(state.best, Math.floor(state.score));
+        storeBest();
+        syncHud();
+        state.restartDelayUntil = performance.now() + 900;
+        setStatus("Run over");
+        setOverlay(
+          reason === "fuel" ? "Out Of Fuel" : "Crash",
+          reason === "fuel"
+            ? "The tank ran dry. Move again after a short pause to restart."
+            : "Traffic closed the gap. Move again after a short pause to restart.",
+          true
+        );
+        addParticleBurst(PLAYER_X, state.playerY, reason === "fuel" ? "255,215,106" : "255,122,137", 24);
+      }
+
+      function updateTargetFromClientY(clientY) {
+        const rect = canvas.getBoundingClientRect();
+        const y = ((clientY - rect.top) / rect.height) * canvas.height;
+        const lane = laneFromY(clamp(y, ROAD_TOP + 8, ROAD_BOTTOM - 8));
+        state.targetY = laneCenter(lane);
+
+        if (!state.running && !state.gameOver) {
+          startGame();
+        } else if (state.gameOver && performance.now() >= state.restartDelayUntil) {
+          resetGame();
+          startGame();
+        }
+      }
+
+      function spawnTraffic() {
+        const lane = Math.floor(Math.random() * LANE_COUNT);
+        state.traffic.push({
+          x: ROAD_RIGHT + 120,
+          y: laneCenter(lane),
+          width: randomRange(74, 104),
+          height: randomRange(36, 48),
+          speed: randomRange(260, 360) * state.speedFactor,
+          hue: randomRange(180, 355),
+        });
+      }
+
+      function spawnFuel() {
+        const lane = Math.floor(Math.random() * LANE_COUNT);
+        state.pickups.push({
+          type: "fuel",
+          x: ROAD_RIGHT + 80,
+          y: laneCenter(lane),
+          radius: 15,
+          speed: randomRange(250, 320) * state.speedFactor,
+          pulse: Math.random() * Math.PI * 2,
+        });
+      }
+
+      function spawnBoostGate() {
+        const lane = Math.floor(Math.random() * LANE_COUNT);
+        state.boostGates.push({
+          x: ROAD_RIGHT + 120,
+          y: laneCenter(lane),
+          width: 28,
+          height: 72,
+          speed: randomRange(240, 300) * state.speedFactor,
+          pulse: Math.random() * Math.PI * 2,
+        });
+      }
+
+      function updateStars(dt) {
+        for (const star of state.stars) {
+          star.x -= star.speed * dt * state.speedFactor;
+          if (star.x < -6) {
+            star.x = canvas.width + 8;
+            star.y = Math.random() * canvas.height;
+            star.speed = randomRange(18, 90);
+            star.size = randomRange(1, 3.2);
+            star.alpha = randomRange(0.08, 0.42);
+          }
+        }
+      }
+
+      function updateParticles(dt) {
+        for (const particle of state.particles) {
+          particle.x += particle.vx * dt;
+          particle.y += particle.vy * dt;
+          particle.life -= dt;
+        }
+        state.particles = state.particles.filter((particle) => particle.life > 0);
+      }
+
+      function rectHit(ax, ay, aw, ah, bx, by, bw, bh) {
+        return (
+          ax - aw / 2 < bx + bw / 2 &&
+          ax + aw / 2 > bx - bw / 2 &&
+          ay - ah / 2 < by + bh / 2 &&
+          ay + ah / 2 > by - bh / 2
+        );
+      }
+
+      function updateGame(dt) {
+        state.playerY += (state.targetY - state.playerY) * Math.min(1, dt * 10);
+        updateStars(dt);
+        updateParticles(dt);
+
+        if (!state.running) {
+          return;
+        }
+
+        state.boostTimer = Math.max(0, state.boostTimer - dt);
+        const baseSpeed = 1 + (state.score / 900);
+        state.speedFactor = clamp(baseSpeed + (state.boostTimer > 0 ? 0.8 : 0), 1, 2.8);
+
+        const roadSpeed = 280 * state.speedFactor;
+        state.roadOffset += roadSpeed * dt;
+        state.score += dt * roadSpeed * 0.12;
+        state.fuel -= dt * (5.6 + state.speedFactor * 1.4);
+        if (state.fuel <= 0) {
+          state.fuel = 0;
+          gameOver("fuel");
+        }
+
+        state.trafficSpawnTimer -= dt;
+        if (state.trafficSpawnTimer <= 0) {
+          spawnTraffic();
+          state.trafficSpawnTimer = randomRange(0.7, 1.15) / state.speedFactor;
+        }
+
+        state.fuelSpawnTimer -= dt;
+        if (state.fuelSpawnTimer <= 0) {
+          spawnFuel();
+          state.fuelSpawnTimer = randomRange(2.2, 3.6);
+        }
+
+        state.gateSpawnTimer -= dt;
+        if (state.gateSpawnTimer <= 0) {
+          spawnBoostGate();
+          state.gateSpawnTimer = randomRange(4.2, 6.3);
+        }
+
+        const playerWidth = PLAYER_WIDTH;
+        const playerHeight = PLAYER_HEIGHT;
+
+        for (const car of state.traffic) {
+          car.x -= car.speed * dt;
+          if (rectHit(PLAYER_X, state.playerY, playerWidth, playerHeight, car.x, car.y, car.width, car.height)) {
+            gameOver("crash");
+          }
+        }
+
+        for (const pickup of state.pickups) {
+          pickup.x -= pickup.speed * dt;
+          pickup.pulse += dt * 6;
+          if (pickup.collected) {
+            continue;
+          }
+          const dx = pickup.x - PLAYER_X;
+          const dy = pickup.y - state.playerY;
+          const d = Math.sqrt((dx * dx) + (dy * dy));
+          if (d < pickup.radius + 24) {
+            pickup.collected = true;
+            state.fuel = Math.min(100, state.fuel + 28);
+            state.score += 50;
+            addParticleBurst(pickup.x, pickup.y, "255,215,106", 16);
+          }
+        }
+
+        for (const gate of state.boostGates) {
+          gate.x -= gate.speed * dt;
+          gate.pulse += dt * 5;
+          if (gate.hit) {
+            continue;
+          }
+          if (rectHit(PLAYER_X, state.playerY, playerWidth, playerHeight, gate.x, gate.y, gate.width, gate.height)) {
+            gate.hit = true;
+            state.boostTimer = 2.4;
+            state.score += 70;
+            addParticleBurst(gate.x, gate.y, "88,215,255", 18);
+          }
+        }
+
+        state.traffic = state.traffic.filter((car) => car.x + car.width > ROAD_LEFT - 140);
+        state.pickups = state.pickups.filter((pickup) => pickup.x + pickup.radius > ROAD_LEFT - 120 && !pickup.collected);
+        state.boostGates = state.boostGates.filter((gate) => gate.x + gate.width > ROAD_LEFT - 120 && !gate.hit);
+
+        syncHud();
+      }
+
+      function drawBackground() {
+        const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        bg.addColorStop(0, "#07101a");
+        bg.addColorStop(0.5, "#0c1430");
+        bg.addColorStop(1, "#170f1d");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (const star of state.stars) {
+          ctx.fillStyle = `rgba(255,255,255,${star.alpha})`;
+          ctx.fillRect(star.x, star.y, star.size, star.size);
+        }
+      }
+
+      function drawRoad() {
+        ctx.fillStyle = "#1a1f2d";
+        ctx.fillRect(ROAD_LEFT, ROAD_TOP, ROAD_RIGHT - ROAD_LEFT, ROAD_BOTTOM - ROAD_TOP);
+
+        const shoulder = ctx.createLinearGradient(ROAD_LEFT - 30, 0, ROAD_LEFT, 0);
+        shoulder.addColorStop(0, "rgba(255,122,137,0)");
+        shoulder.addColorStop(1, "rgba(255,122,137,0.45)");
+        ctx.fillStyle = shoulder;
+        ctx.fillRect(ROAD_LEFT - 30, ROAD_TOP, 30, ROAD_BOTTOM - ROAD_TOP);
+
+        const shoulder2 = ctx.createLinearGradient(ROAD_RIGHT, 0, ROAD_RIGHT + 30, 0);
+        shoulder2.addColorStop(0, "rgba(255,122,137,0.45)");
+        shoulder2.addColorStop(1, "rgba(255,122,137,0)");
+        ctx.fillStyle = shoulder2;
+        ctx.fillRect(ROAD_RIGHT, ROAD_TOP, 30, ROAD_BOTTOM - ROAD_TOP);
+
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(ROAD_LEFT, ROAD_TOP, ROAD_RIGHT - ROAD_LEFT, ROAD_BOTTOM - ROAD_TOP);
+
+        const dashOffset = state.roadOffset % 72;
+        ctx.strokeStyle = "rgba(255,255,255,0.24)";
+        ctx.lineWidth = 3;
+        for (let lane = 1; lane < LANE_COUNT; lane += 1) {
+          const y = ROAD_TOP + lane * LANE_HEIGHT;
+          for (let x = ROAD_LEFT - 80 + dashOffset; x < ROAD_RIGHT; x += 72) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + 32, y);
+            ctx.stroke();
+          }
+        }
+
+        for (let x = ROAD_LEFT - 150 + (state.roadOffset % 54); x < ROAD_RIGHT + 120; x += 54) {
+          ctx.fillStyle = "rgba(88,215,255,0.06)";
+          ctx.fillRect(x, ROAD_TOP + 8, 6, ROAD_BOTTOM - ROAD_TOP - 16);
+        }
+      }
+
+      function drawTraffic() {
+        for (const car of state.traffic) {
+          const body = ctx.createLinearGradient(car.x - car.width / 2, 0, car.x + car.width / 2, 0);
+          body.addColorStop(0, `hsla(${car.hue}, 85%, 62%, 0.95)`);
+          body.addColorStop(1, `hsla(${(car.hue + 22) % 360}, 82%, 45%, 0.95)`);
+
+          ctx.fillStyle = body;
+          roundRect(car.x - car.width / 2, car.y - car.height / 2, car.width, car.height, 12, true);
+
+          ctx.fillStyle = "rgba(255,255,255,0.18)";
+          roundRect(car.x - car.width / 2 + 10, car.y - car.height / 2 + 6, car.width - 20, 10, 6, true);
+
+          ctx.fillStyle = "rgba(16,18,26,0.9)";
+          roundRect(car.x - car.width / 2 + 14, car.y - 8, car.width - 28, 16, 6, true);
+        }
+      }
+
+      function drawPickups() {
+        for (const pickup of state.pickups) {
+          const scale = 1 + Math.sin(pickup.pulse) * 0.08;
+          ctx.beginPath();
+          ctx.fillStyle = "rgba(255,215,106,0.18)";
+          ctx.arc(pickup.x, pickup.y, pickup.radius * 1.8 * scale, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "#ffd76a";
+          roundRect(pickup.x - 12, pickup.y - 16, 24, 32, 7, true);
+          ctx.fillStyle = "#fff2bd";
+          ctx.fillRect(pickup.x - 3, pickup.y - 10, 6, 20);
+        }
+      }
+
+      function drawBoostGates() {
+        for (const gate of state.boostGates) {
+          const pulse = 1 + Math.sin(gate.pulse) * 0.1;
+          ctx.strokeStyle = "rgba(88,215,255,0.2)";
+          ctx.lineWidth = 10;
+          roundRect(gate.x - (gate.width * pulse) / 2, gate.y - gate.height / 2, gate.width * pulse, gate.height, 12, false);
+
+          ctx.strokeStyle = "#58d7ff";
+          ctx.lineWidth = 4;
+          roundRect(gate.x - gate.width / 2, gate.y - gate.height / 2, gate.width, gate.height, 10, false);
+        }
+      }
+
+      function drawPlayer(time) {
+        const trail = ctx.createLinearGradient(PLAYER_X - 130, state.playerY, PLAYER_X + 8, state.playerY);
+        trail.addColorStop(0, "rgba(88,215,255,0)");
+        trail.addColorStop(1, `rgba(88,215,255,${state.boostTimer > 0 ? 0.42 : 0.22})`);
+        ctx.fillStyle = trail;
+        ctx.fillRect(PLAYER_X - 130, state.playerY - 8, 130, 16);
+
+        const body = ctx.createLinearGradient(PLAYER_X - 40, state.playerY - 20, PLAYER_X + 42, state.playerY + 20);
+        body.addColorStop(0, "#f8f6ef");
+        body.addColorStop(1, "#d6deea");
+        ctx.fillStyle = body;
+        roundRect(PLAYER_X - PLAYER_WIDTH / 2, state.playerY - PLAYER_HEIGHT / 2, PLAYER_WIDTH, PLAYER_HEIGHT, 14, true);
+
+        ctx.fillStyle = state.boostTimer > 0 ? "#58d7ff" : "#81f5d3";
+        roundRect(PLAYER_X - 10, state.playerY - 10, 28, 20, 7, true);
+
+        ctx.fillStyle = "rgba(12,15,22,0.9)";
+        roundRect(PLAYER_X - PLAYER_WIDTH / 2 + 10, state.playerY - PLAYER_HEIGHT / 2 + 6, 16, 12, 4, true);
+        roundRect(PLAYER_X + PLAYER_WIDTH / 2 - 26, state.playerY - PLAYER_HEIGHT / 2 + 6, 16, 12, 4, true);
+        roundRect(PLAYER_X - PLAYER_WIDTH / 2 + 10, state.playerY + PLAYER_HEIGHT / 2 - 18, 16, 12, 4, true);
+        roundRect(PLAYER_X + PLAYER_WIDTH / 2 - 26, state.playerY + PLAYER_HEIGHT / 2 - 18, 16, 12, 4, true);
+
+        ctx.strokeStyle = `rgba(129,245,211,${0.18 + Math.sin(time * 6) * 0.04 + (state.boostTimer > 0 ? 0.24 : 0)})`;
+        ctx.lineWidth = 3;
+        roundRect(PLAYER_X - PLAYER_WIDTH / 2 - 8, state.playerY - PLAYER_HEIGHT / 2 - 6, PLAYER_WIDTH + 16, PLAYER_HEIGHT + 12, 18, false);
+      }
+
+      function drawParticles() {
+        for (const particle of state.particles) {
+          const alpha = particle.life / particle.maxLife;
+          ctx.fillStyle = `rgba(${particle.color},${alpha})`;
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawFuelBar() {
+        const width = 190;
+        const height = 12;
+        const x = ROAD_RIGHT - width - 10;
+        const y = ROAD_TOP - 34;
+
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(x, y, width, height);
+
+        const fill = ctx.createLinearGradient(x, y, x + width, y);
+        fill.addColorStop(0, "#ff7a89");
+        fill.addColorStop(0.5, "#ffd76a");
+        fill.addColorStop(1, "#81f5d3");
+        ctx.fillStyle = fill;
+        ctx.fillRect(x, y, width * (state.fuel / 100), height);
+
+        ctx.strokeStyle = "rgba(255,255,255,0.14)";
+        ctx.strokeRect(x, y, width, height);
+      }
+
+      function roundRect(x, y, width, height, radius, fill) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        if (fill) {
+          ctx.fill();
+        } else {
+          ctx.stroke();
+        }
+      }
+
+      function draw(time) {
+        const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        bg.addColorStop(0, "#06101a");
+        bg.addColorStop(0.55, "#0c1631");
+        bg.addColorStop(1, "#170f1d");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (const star of state.stars) {
+          ctx.fillStyle = `rgba(255,255,255,${star.alpha})`;
+          ctx.fillRect(star.x, star.y, star.size, star.size);
+        }
+
+        drawRoad();
+        drawBoostGates();
+        drawPickups();
+        drawTraffic();
+        drawParticles();
+        drawPlayer(time);
+        drawFuelBar();
+      }
+
+      function frame(now) {
+        const dt = Math.min(0.032, (now - state.lastTime) / 1000 || 0);
+        state.lastTime = now;
+        updateGame(dt);
+        draw(now * 0.001);
+        requestAnimationFrame(frame);
+      }
+
+      window.addEventListener("mousemove", (event) => {
+        updateTargetFromClientY(event.clientY);
+      });
+
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowUp") {
+          const lane = clamp(laneFromY(state.targetY) - 1, 0, LANE_COUNT - 1);
+          state.targetY = laneCenter(lane);
+          if (!state.running && (!state.gameOver || performance.now() >= state.restartDelayUntil)) {
+            startGame();
+          }
+        } else if (event.key === "ArrowDown") {
+          const lane = clamp(laneFromY(state.targetY) + 1, 0, LANE_COUNT - 1);
+          state.targetY = laneCenter(lane);
+          if (!state.running && (!state.gameOver || performance.now() >= state.restartDelayUntil)) {
+            startGame();
+          }
+        }
+      });
+
+      createStars();
+      syncHud();
+      resetGame();
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
