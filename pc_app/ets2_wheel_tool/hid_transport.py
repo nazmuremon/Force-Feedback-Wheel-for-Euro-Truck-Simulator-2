@@ -14,6 +14,7 @@ from . import protocol
 @dataclass
 class HidDeviceInfo:
     path: str
+    raw_path: bytes | None
     vendor_id: int
     product_id: int
     product_string: str
@@ -63,11 +64,14 @@ class HidTransport:
             raw_path = entry.get("path")
             if isinstance(raw_path, bytes):
                 path = raw_path.decode("utf-8", errors="ignore")
+                raw_path_bytes = raw_path
             else:
                 path = str(raw_path)
+                raw_path_bytes = None
             devices.append(
                 HidDeviceInfo(
                     path=path,
+                    raw_path=raw_path_bytes,
                     vendor_id=vendor_id,
                     product_id=product_id,
                     product_string=product_string,
@@ -95,7 +99,12 @@ class HidTransport:
     def connect(self, path: str) -> None:
         self.disconnect()
         device = hid.device()
-        device.open_path(path.encode("utf-8"))
+        open_path: bytes = path.encode("utf-8")
+        for entry in self.list_devices():
+            if entry.path == path and entry.raw_path is not None:
+                open_path = entry.raw_path
+                break
+        device.open_path(open_path)
         device.set_nonblocking(True)
         self._device = device
         if not self.USE_FEATURE_TRANSPORT:

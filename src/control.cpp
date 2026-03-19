@@ -5,6 +5,7 @@
 namespace {
 
 ControlEffects g_effects{};
+HostFfbOverlay g_host_ffb{};
 uint32_t g_last_command_ms = 0;
 uint32_t g_last_motor_test_ms = 0;
 uint32_t g_fault_flags = FAULT_MOTOR_DISABLED;
@@ -29,6 +30,7 @@ void init() {
   g_last_command_ms = millis();
   g_last_motor_test_ms = 0;
   g_start_ms = millis();
+  g_host_ffb = HostFfbOverlay{};
 }
 
 void markCommandReceived() { g_last_command_ms = millis(); }
@@ -56,16 +58,27 @@ void updateControl() {
   float torque = 0.0f;
   torque += g_effects.constant_torque;
 
-  const float spring_error_deg = g_effects.spring_center_deg - enc.angle_deg;
-  torque += constrain(g_effects.spring_gain, 0.0f, app::kSpringMax) *
-            (spring_error_deg / (app::kWheelRangeDeg * 0.5f));
+  if (g_host_ffb.active) {
+    torque += g_host_ffb.constant_torque;
+  }
 
-  torque += constrain(g_effects.damper_gain, 0.0f, app::kDamperMax) *
-            (-enc.speed_deg_s / 720.0f);
+  const float spring_center_deg = g_host_ffb.active ? g_host_ffb.spring_center_deg : g_effects.spring_center_deg;
+  const float spring_gain =
+      max(constrain(g_effects.spring_gain, 0.0f, app::kSpringMax),
+          g_host_ffb.active ? constrain(g_host_ffb.spring_gain, 0.0f, app::kSpringMax) : 0.0f);
+  const float spring_error_deg = spring_center_deg - enc.angle_deg;
+  torque += spring_gain * (spring_error_deg / (app::kWheelRangeDeg * 0.5f));
+
+  const float damper_gain =
+      max(constrain(g_effects.damper_gain, 0.0f, app::kDamperMax),
+          g_host_ffb.active ? constrain(g_host_ffb.damper_gain, 0.0f, app::kDamperMax) : 0.0f);
+  torque += damper_gain * (-enc.speed_deg_s / 720.0f);
 
   if (fabsf(enc.speed_deg_s) > 1.5f) {
-    torque += constrain(g_effects.friction_gain, 0.0f, app::kFrictionMax) *
-              ((enc.speed_deg_s > 0.0f) ? -0.10f : 0.10f);
+    const float friction_gain =
+        max(constrain(g_effects.friction_gain, 0.0f, app::kFrictionMax),
+            g_host_ffb.active ? constrain(g_host_ffb.friction_gain, 0.0f, app::kFrictionMax) : 0.0f);
+    torque += friction_gain * ((enc.speed_deg_s > 0.0f) ? -0.10f : 0.10f);
   }
 
   if (g_effects.vibration_gain > 0.0f && g_effects.vibration_freq_hz > 0.0f) {
@@ -132,9 +145,14 @@ ControlSnapshot getSnapshot() {
 
 ControlEffects& effects() { return g_effects; }
 
+void setHostFfbOverlay(const HostFfbOverlay& overlay) { g_host_ffb = overlay; }
+
+void clearHostFfbOverlay() { g_host_ffb = HostFfbOverlay{}; }
+
 void clearFaults() {
   g_fault_flags = FAULT_NONE;
   g_effects.estop = false;
+  encoder::clearFault();
 }
 
 void zeroEncoder() { encoder::zeroAtCurrentPosition(); }

@@ -12,8 +12,8 @@
   "torque_limit": 0.45,
   "last_port": "",
   "start_with_windows": false,
-  "test_mode": true,
-  "runtime_enabled": true,
+  "test_mode": false,
+  "runtime_enabled": false,
   "virtual_controller_enabled": true,
   "virtual_steering_range_deg": 360.0,
   "brake": {

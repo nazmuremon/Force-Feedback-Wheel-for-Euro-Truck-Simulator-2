@@ -33,8 +33,9 @@ constexpr float kWheelMaxSpeedDegPerSec = 2200.0f;
 
 constexpr int kPwmFrequencyHz = 20000;
 constexpr int kPwmResolutionBits = 8;
-constexpr int kPwmClamp = 120;
+constexpr int kPwmClamp = 255;
 constexpr int kPwmDeadband = 8;
+constexpr int kPwmMinDrive = 48;
 constexpr int kPwmRampPerControlTick = 5;
 
 constexpr uint32_t kCommTimeoutMs = 250;
@@ -42,7 +43,7 @@ constexpr uint32_t kStartupQuietTimeMs = 1500;
 constexpr uint32_t kImpulseTimeoutMs = 120;
 constexpr uint32_t kMotorTestLedHoldMs = 400;
 
-constexpr float kTorqueCommandLimit = 0.45f;
+constexpr float kTorqueCommandLimit = 1.0f;
 constexpr float kTorqueFilterAlpha = 0.18f;
 constexpr float kDamperMax = 1.50f;
 constexpr float kSpringMax = 1.50f;

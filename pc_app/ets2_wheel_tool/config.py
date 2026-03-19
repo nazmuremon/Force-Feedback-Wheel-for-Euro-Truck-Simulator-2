@@ -36,8 +36,8 @@ class WheelProfile:
     torque_limit: float = 0.45
     last_port: str = ""
     start_with_windows: bool = False
-    test_mode: bool = True
-    runtime_enabled: bool = True
+    test_mode: bool = False
+    runtime_enabled: bool = False
     virtual_controller_enabled: bool = True
     virtual_steering_range_deg: float = 360.0
     brake: "PedalCalibration" = field(default_factory=lambda: PedalCalibration())
@@ -66,8 +66,8 @@ class WheelProfile:
             torque_limit=raw.get("torque_limit", 0.45),
             last_port=raw.get("last_port", ""),
             start_with_windows=raw.get("start_with_windows", False),
-            test_mode=raw.get("test_mode", True),
-            runtime_enabled=raw.get("runtime_enabled", True),
+            test_mode=raw.get("test_mode", False),
+            runtime_enabled=raw.get("runtime_enabled", False),
             virtual_controller_enabled=raw.get("virtual_controller_enabled", True),
             virtual_steering_range_deg=raw.get("virtual_steering_range_deg", 360.0),
             brake=PedalCalibration(**raw.get("brake", {})),

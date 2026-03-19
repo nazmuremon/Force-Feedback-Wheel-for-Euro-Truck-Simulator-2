@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 import threading
 import time
 from typing import Callable
@@ -9,6 +10,18 @@ import serial
 import serial.tools.list_ports
 
 from . import protocol
+
+
+@dataclass
+class SerialPortInfo:
+    port: str
+    description: str
+    hwid: str
+
+    @property
+    def label(self) -> str:
+        description = self.description or "Serial Port"
+        return f"{description} - Serial ({self.port})"
 
 
 class SerialTransport:
@@ -26,6 +39,17 @@ class SerialTransport:
     @staticmethod
     def list_ports() -> list[str]:
         return [port.device for port in serial.tools.list_ports.comports()]
+
+    @staticmethod
+    def list_port_infos() -> list[SerialPortInfo]:
+        return [
+            SerialPortInfo(
+                port=port.device,
+                description=port.description or "",
+                hwid=port.hwid or "",
+            )
+            for port in serial.tools.list_ports.comports()
+        ]
 
     @property
     def connected(self) -> bool:

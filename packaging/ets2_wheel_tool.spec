@@ -8,6 +8,7 @@ project_root = Path(SPEC).resolve().parent.parent
 datas = [
     (str(project_root / "profiles"), "profiles"),
     (str(project_root / "docs"), "docs"),
+    (str(project_root / ".research" / "ets2-telemetry-server" / "server"), "ets2_telemetry_server"),
 ]
 
 hiddenimports = [

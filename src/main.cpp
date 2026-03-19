@@ -3,6 +3,7 @@
 #include "app_config.h"
 #include "control.h"
 #include "encoder.h"
+#include "hid_ffb.h"
 #include "motor.h"
 #include "pedals.h"
 #include "usb_gamepad.h"
@@ -32,6 +33,7 @@ void setup() {
   pedals::init();
   motor::init();
   control::init();
+  hid_ffb::init();
   encoder::zeroAtCurrentPosition();
 
   if (app::kNativeUsbGamepadMode) {
@@ -60,6 +62,7 @@ void loop() {
 
   if (now_us - g_last_control_us >= control_period_us) {
     g_last_control_us = now_us;
+    hid_ffb::update();
     control::updateControl();
     const ControlSnapshot snapshot = control::getSnapshot();
     if (control::isMotorTestActive()) {

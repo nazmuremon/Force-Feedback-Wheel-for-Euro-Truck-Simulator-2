@@ -10,6 +10,19 @@ int g_target_pwm = 0;
 int g_applied_pwm = 0;
 float g_applied_torque = 0.0f;
 
+int applyMinimumDrive(int pwm) {
+  if (pwm == 0) {
+    return 0;
+  }
+
+  const int sign = (pwm > 0) ? 1 : -1;
+  const int magnitude = abs(pwm);
+  if (magnitude < app::kPwmMinDrive) {
+    return sign * app::kPwmMinDrive;
+  }
+  return pwm;
+}
+
 void setEnablePins(bool active) {
   if (!app::kUseMotorEnablePins) {
     return;
@@ -110,7 +123,12 @@ void stop() {
 }
 
 void setPwmRaw(int pwm) {
-  g_target_pwm = constrain(pwm, -app::kPwmClamp, app::kPwmClamp);
+  const int bounded = constrain(pwm, -app::kPwmClamp, app::kPwmClamp);
+  if (abs(bounded) < app::kPwmDeadband) {
+    g_target_pwm = 0;
+    return;
+  }
+  g_target_pwm = applyMinimumDrive(bounded);
 }
 
 MotorSnapshot getSnapshot() {

@@ -126,6 +126,19 @@ def make_slider(low: int, high: int, value: int) -> QSlider:
 
 
 class MainWindow(QMainWindow):
+    _AUTO_SWEEP_CPR = 8000
+    _AUTO_SWEEP_RANGE_DEG = 900.0
+    _AUTO_SWEEP_HALF_RANGE_DEG = _AUTO_SWEEP_RANGE_DEG / 2.0
+    _AUTO_SWEEP_TARGET_TOLERANCE_COUNTS = 18
+    _AUTO_SWEEP_NEAR_TARGET_COUNTS = 320
+    _AUTO_SWEEP_FAST_PWM = 140
+    _AUTO_SWEEP_MEDIUM_PWM = 120
+    _AUTO_SWEEP_SLOW_PWM = 96
+    _AUTO_SWEEP_PROBE_PWM = 110
+    _AUTO_SWEEP_PROBE_MIN_DELTA = 10
+    _AUTO_SWEEP_PROBE_MAX_COUNTS = 180
+    _AUTO_SWEEP_STALL_SECONDS = 1.2
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle('ETS2 DIY FFB Wheel Tool')
@@ -153,7 +166,26 @@ class MainWindow(QMainWindow):
         self.last_force = 0.0
         self.current_angle = 0.0
         self.current_speed = 0.0
+        self._ffb_armed = False
+        self._ffb_center_deg = 0.0
         self._last_count_sample: tuple[int, float] | None = None
+        self._auto_center_left_count: int | None = None
+        self._auto_center_right_count: int | None = None
+        self._manual_center_count: int | None = None
+        self._auto_calibration_active = False
+        self._auto_calibration_phase = ""
+        self._auto_calibration_phase_started = 0.0
+        self._auto_calibration_last_count = 0
+        self._auto_calibration_stall_ticks = 0
+        self._auto_calibration_positive_pwm_increases_count: bool | None = None
+        self._auto_calibration_saved_runtime_enabled = False
+        self._auto_calibration_center_count = 0
+        self._auto_calibration_left_target = 0
+        self._auto_calibration_right_target = 0
+        self._auto_calibration_last_pwm_command = 0
+        self._auto_calibration_progress_time = 0.0
+        self._auto_calibration_probe_start_count = 0
+        self._auto_calibration_direction_flip_used = False
 
         root_widget = QWidget()
         self.setCentralWidget(root_widget)
@@ -238,6 +270,39 @@ class MainWindow(QMainWindow):
             self.manual_torque_slider.setValue(0)
         self.manual_pwm_slider.setValue(value)
 
+    def _set_manual_controls_idle(self) -> None:
+        with QSignalBlocker(self.manual_torque_slider):
+            self.manual_torque_slider.setValue(0)
+        with QSignalBlocker(self.manual_pwm_slider):
+            self.manual_pwm_slider.setValue(0)
+
+    def _clear_device_motor_commands(self) -> None:
+        self.device.reset_force_state()
+        if not self.device.transport.connected:
+            return
+        self.device.set_pwm_raw(0)
+        self.device.set_constant_torque(0.0)
+        self.device.set_spring(0.0, self.profile.encoder.center_offset_deg)
+        self.device.set_damper(0.0)
+        self.device.set_friction(0.0)
+        self.device.set_vibration(0.0, 0.0)
+
+    def _set_ffb_armed(self, armed: bool) -> None:
+        self._ffb_armed = armed and self.device.transport.connected
+        if self._ffb_armed:
+            self._ffb_center_deg = self.current_angle
+        if not self._ffb_armed:
+            self._ffb_center_deg = self.current_angle
+            self._clear_device_motor_commands()
+        if hasattr(self, "ffb_arm_button"):
+            self.ffb_arm_button.setText('Disarm FFB' if self._ffb_armed else 'Arm FFB')
+        if hasattr(self, "ffb_arm_status_label"):
+            self.ffb_arm_status_label.setText('Armed' if self._ffb_armed else 'Disarmed')
+            self.ffb_arm_status_label.setStyleSheet('color: #4ade80;' if self._ffb_armed else 'color: #f87171;')
+
+    def toggle_ffb_arm(self) -> None:
+        self._set_ffb_armed(not self._ffb_armed)
+
     def run_full_speed_motor(self, direction: int) -> None:
         self._set_manual_pwm(self.manual_pwm_slider.maximum() * direction)
 
@@ -272,7 +337,7 @@ class MainWindow(QMainWindow):
         self.profile.runtime_enabled = self.runtime_enable_checkbox.isChecked()
         self.profile.virtual_controller_enabled = self.virtual_controller_checkbox.isChecked()
         self.profile.virtual_steering_range_deg = self.virtual_steer_range_spin.value()
-        self.profile.encoder.counts_per_rev = self.encoder_cpr_spin.value()
+        self.profile.encoder.counts_per_rev = self._AUTO_SWEEP_CPR
         self.profile.encoder.wheel_range_deg = self.encoder_range_spin.value()
         self.profile.encoder.center_offset_deg = self.encoder_offset_spin.value()
         self.profile.encoder.invert_direction = self.encoder_invert_checkbox.isChecked()
@@ -297,7 +362,8 @@ class MainWindow(QMainWindow):
         self.virtual_controller_checkbox.setChecked(self.profile.virtual_controller_enabled)
         self.start_with_windows_checkbox.setChecked(self.profile.start_with_windows)
         self.virtual_steer_range_spin.setValue(self.profile.virtual_steering_range_deg)
-        self.encoder_cpr_spin.setValue(self.profile.encoder.counts_per_rev)
+        self.profile.encoder.counts_per_rev = self._AUTO_SWEEP_CPR
+        self.encoder_cpr_spin.setValue(self._AUTO_SWEEP_CPR)
         self.encoder_range_spin.setValue(self.profile.encoder.wheel_range_deg)
         self.encoder_offset_spin.setValue(self.profile.encoder.center_offset_deg)
         self.encoder_invert_checkbox.setChecked(self.profile.encoder.invert_direction)
@@ -398,6 +464,10 @@ class MainWindow(QMainWindow):
         self.runtime_enable_checkbox = QCheckBox('Stream FFB to STM32')
         self.virtual_controller_checkbox = QCheckBox('Expose virtual Xbox controller')
         self.start_with_windows_checkbox = QCheckBox('Start app with Windows')
+        self.ffb_arm_button = QPushButton('Arm FFB')
+        self.ffb_arm_button.clicked.connect(self.toggle_ffb_arm)
+        self.ffb_arm_status_label = QLabel('Disarmed')
+        self.ffb_arm_status_label.setStyleSheet('color: #f87171;')
         self.test_mode_checkbox.toggled.connect(self._sync_settings_from_ui)
         self.runtime_enable_checkbox.toggled.connect(self._sync_settings_from_ui)
         self.virtual_controller_checkbox.toggled.connect(self._on_virtual_controller_toggled)
@@ -406,6 +476,8 @@ class MainWindow(QMainWindow):
         opts_form.addRow(self.runtime_enable_checkbox)
         opts_form.addRow(self.virtual_controller_checkbox)
         opts_form.addRow(self.start_with_windows_checkbox)
+        opts_form.addRow('FFB State', self.ffb_arm_status_label)
+        opts_form.addRow(self.ffb_arm_button)
         actions = QGroupBox('Quick Actions')
         actions_layout = QVBoxLayout(actions)
         zero_btn = QPushButton('Set Current Position As Center')
@@ -441,7 +513,7 @@ class MainWindow(QMainWindow):
         live_form.addRow('Range Use', self.encoder_range_label)
         cal = QGroupBox('Calibration')
         cal_form = QFormLayout(cal)
-        self.encoder_cpr_spin = QSpinBox(); self.encoder_cpr_spin.setRange(1, 100000); self.encoder_cpr_spin.setSingleStep(100)
+        self.encoder_cpr_spin = QSpinBox(); self.encoder_cpr_spin.setRange(self._AUTO_SWEEP_CPR, self._AUTO_SWEEP_CPR); self.encoder_cpr_spin.setValue(self._AUTO_SWEEP_CPR); self.encoder_cpr_spin.setEnabled(False)
         self.encoder_range_spin = QDoubleSpinBox(); self.encoder_range_spin.setRange(90.0, 2160.0); self.encoder_range_spin.setSuffix(' deg')
         self.virtual_steer_range_spin = QDoubleSpinBox(); self.virtual_steer_range_spin.setRange(90.0, 2160.0); self.virtual_steer_range_spin.setSuffix(' deg')
         self.encoder_offset_spin = QDoubleSpinBox(); self.encoder_offset_spin.setRange(-1080.0, 1080.0); self.encoder_offset_spin.setSuffix(' deg')
@@ -449,14 +521,23 @@ class MainWindow(QMainWindow):
         for widget in (self.encoder_cpr_spin, self.encoder_range_spin, self.virtual_steer_range_spin, self.encoder_offset_spin):
             widget.valueChanged.connect(self._sync_settings_from_ui)
         self.encoder_invert_checkbox.toggled.connect(self._sync_settings_from_ui)
-        capture_btn = QPushButton('Capture Current Center')
-        capture_btn.clicked.connect(self.capture_current_encoder_center)
+        center_btn = QPushButton('Set Current As Center')
+        center_btn.clicked.connect(self.set_manual_center)
+        right_btn = QPushButton('Capture +450 Right')
+        right_btn.clicked.connect(lambda: self.capture_manual_marker("right"))
+        left_btn = QPushButton('Capture -450 Left')
+        left_btn.clicked.connect(lambda: self.capture_manual_marker("left"))
+        apply_btn = QPushButton('Save Manual Calibration')
+        apply_btn.clicked.connect(self.apply_manual_calibration)
         cal_form.addRow('CPR', self.encoder_cpr_spin)
         cal_form.addRow('Wheel Range', self.encoder_range_spin)
         cal_form.addRow('Game Steering Range', self.virtual_steer_range_spin)
         cal_form.addRow('Center Offset', self.encoder_offset_spin)
         cal_form.addRow(self.encoder_invert_checkbox)
-        cal_form.addRow(capture_btn)
+        cal_form.addRow(center_btn)
+        cal_form.addRow(right_btn)
+        cal_form.addRow(left_btn)
+        cal_form.addRow(apply_btn)
         top.addWidget(live, 1)
         top.addWidget(cal, 1)
         wheel_box = QGroupBox('Visual Wheel')
@@ -622,6 +703,7 @@ class MainWindow(QMainWindow):
         self._migrate_legacy_settings_into_profile()
         self._apply_profile_to_ui()
         self.virtual_controller.set_enabled(self.profile.virtual_controller_enabled)
+        self._set_ffb_armed(False)
         if self._migrated_profile_data:
             self._save_active_profile()
             self._save_settings()
@@ -641,8 +723,9 @@ class MainWindow(QMainWindow):
     def connect_selected(self) -> None:
         path = self.port_combo.currentData()
         if not path:
-            QMessageBox.warning(self, 'No Device', 'Select a USB HID device first.')
+            QMessageBox.warning(self, 'No Device', 'Select a HID or Serial device first.')
             return
+        self._set_ffb_armed(False)
         self.device.connect_path(str(path))
         self._sync_settings_from_ui()
         self.apply_saved_calibrations_to_device()
@@ -658,10 +741,402 @@ class MainWindow(QMainWindow):
         self.device.zero_encoder()
         self.encoder_offset_spin.setValue(0.0)
         self._sync_settings_from_ui()
+        self._save_active_profile()
+
+    def set_manual_center(self) -> None:
+        if not self.device.transport.connected:
+            QMessageBox.warning(self, 'Wheel Not Connected', 'Connect the wheel before setting the manual center.')
+            return
+        self._set_ffb_armed(False)
+        self.device.zero_encoder()
+        self.device.clear_faults()
+        self._manual_center_count = 0
+        self._auto_center_left_count = None
+        self._auto_center_right_count = None
+        self.encoder_offset_spin.setValue(0.0)
+        self.encoder_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+        self.virtual_steer_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+        self._sync_settings_from_ui()
+        self._save_active_profile()
+        QMessageBox.information(
+            self,
+            'Center Saved',
+            'The current wheel position has been saved as center.\n\n'
+            'Now rotate the wheel to +450 deg and capture the right marker, then rotate to -450 deg and capture the left marker.',
+        )
 
     def capture_current_encoder_center(self) -> None:
         self.encoder_offset_spin.setValue(self.profile.encoder.center_offset_deg - self._encoder_angle(self.last_state.encoder_count))
         self._sync_settings_from_ui()
+        self._save_active_profile()
+
+    def capture_manual_marker(self, side: str) -> None:
+        if not self.device.transport.connected:
+            QMessageBox.warning(self, 'Wheel Not Connected', 'Connect the wheel before capturing manual markers.')
+            return
+        if self._manual_center_count is None:
+            QMessageBox.warning(self, 'Center Not Set', 'Press "Set Current As Center" first.')
+            return
+        count = self.last_state.encoder_count
+        degrees = count * 360.0 / self._AUTO_SWEEP_CPR
+        if side == "right":
+            self._auto_center_right_count = count
+            QMessageBox.information(
+                self,
+                'Right Marker Saved',
+                f'Right marker captured at {degrees:.1f} deg.\n\n'
+                'Now rotate the wheel to -450 deg and capture the left marker.',
+            )
+            return
+        self._auto_center_left_count = count
+        QMessageBox.information(
+            self,
+            'Left Marker Saved',
+            f'Left marker captured at {degrees:.1f} deg.\n\n'
+            'Press "Save Manual Calibration" to finish.',
+        )
+
+    def apply_manual_calibration(self) -> None:
+        if self._manual_center_count is None:
+            QMessageBox.warning(self, 'Center Not Set', 'Press "Set Current As Center" first.')
+            return
+        self._set_ffb_armed(False)
+        if self._auto_center_right_count is None or self._auto_center_left_count is None:
+            QMessageBox.warning(self, 'Missing Markers', 'Capture both +450 right and -450 left markers first.')
+            return
+        right_deg = self._auto_center_right_count * 360.0 / self._AUTO_SWEEP_CPR
+        left_deg = self._auto_center_left_count * 360.0 / self._AUTO_SWEEP_CPR
+        if right_deg < 200.0 or left_deg > -200.0:
+            QMessageBox.warning(
+                self,
+                'Invalid Markers',
+                'The captured markers do not look like opposite sides of the wheel.\n'
+                'Set center again and capture +450 and -450 more carefully.',
+            )
+            return
+        self.encoder_offset_spin.setValue(0.0)
+        self.encoder_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+        self.virtual_steer_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+        self._sync_settings_from_ui()
+        self._save_active_profile()
+        QMessageBox.information(
+            self,
+            'Manual Calibration Saved',
+            f'Right marker: {right_deg:.1f} deg\n'
+            f'Left marker: {left_deg:.1f} deg\n'
+            'Center kept at 0 deg and wheel range saved as 900 deg.',
+        )
+
+    def capture_auto_center_edge(self, side: str) -> None:
+        if not self.device.transport.connected:
+            QMessageBox.warning(self, 'Wheel Not Connected', 'Connect the wheel before capturing lock positions.')
+            return
+        if side == "left":
+            self._auto_center_left_count = self.last_state.encoder_count
+            QMessageBox.information(
+                self,
+                'Left Lock Captured',
+                f'Left lock saved at encoder count {self._auto_center_left_count}.\n\n'
+                'Now rotate the wheel fully to the right and press "Capture Right Lock".',
+            )
+            return
+        self._auto_center_right_count = self.last_state.encoder_count
+        QMessageBox.information(
+            self,
+            'Right Lock Captured',
+            f'Right lock saved at encoder count {self._auto_center_right_count}.\n\n'
+            'Press "Auto Center From Locks" to calculate the midpoint and range.',
+        )
+
+    def apply_auto_center_from_edges(self) -> None:
+        if self._auto_center_left_count is None or self._auto_center_right_count is None:
+            QMessageBox.warning(
+                self,
+                'Missing Lock Data',
+                'Capture both left and right lock positions first.',
+            )
+            return
+        span_counts = self._auto_center_right_count - self._auto_center_left_count
+        if abs(span_counts) < 10:
+            QMessageBox.warning(
+                self,
+                'Invalid Lock Data',
+                'The captured lock positions are too close together. Capture both ends again.',
+            )
+            return
+        midpoint_count = (self._auto_center_left_count + self._auto_center_right_count) / 2.0
+        degrees_per_count = 360.0 / max(1, self.profile.encoder.counts_per_rev)
+        midpoint_angle = midpoint_count * degrees_per_count
+        if self.profile.encoder.invert_direction:
+            midpoint_angle = -midpoint_angle
+        wheel_range_deg = abs(span_counts) * degrees_per_count
+        self.encoder_offset_spin.setValue(-midpoint_angle)
+        self.encoder_range_spin.setValue(max(90.0, min(2160.0, wheel_range_deg)))
+        self.virtual_steer_range_spin.setValue(max(90.0, min(2160.0, wheel_range_deg)))
+        self._sync_settings_from_ui()
+        self._save_active_profile()
+        QMessageBox.information(
+            self,
+            'Auto Center Applied',
+            f'Center offset set to {self.encoder_offset_spin.value():.2f} deg.\n'
+            f'Wheel range set to {self.encoder_range_spin.value():.1f} deg.',
+        )
+
+    def start_auto_sweep_calibration(self) -> None:
+        if not self.device.transport.connected:
+            QMessageBox.warning(self, 'Wheel Not Connected', 'Connect the wheel before starting auto calibration.')
+            return
+        if self._auto_calibration_active:
+            return
+        target_counts = int(round(self._AUTO_SWEEP_CPR * self._AUTO_SWEEP_HALF_RANGE_DEG / 360.0))
+        self._auto_calibration_saved_runtime_enabled = self.runtime_enable_checkbox.isChecked()
+        if self.runtime_enable_checkbox.isChecked():
+            self.runtime_enable_checkbox.setChecked(False)
+        self.device.set_estop(False)
+        self.device.clear_faults()
+        self.device.zero_encoder()
+        self.device.clear_faults()
+        self.device.set_motor_enabled(True)
+        if not self.motor_enable_checkbox.isChecked():
+            self.motor_enable_checkbox.setChecked(True)
+        self.encoder_cpr_spin.setValue(self._AUTO_SWEEP_CPR)
+        self._set_manual_controls_idle()
+        self._clear_device_motor_commands()
+        self.device.set_motor_enabled(True)
+        self._auto_calibration_active = True
+        self._auto_calibration_phase = "probe_direction"
+        self._auto_calibration_phase_started = time.perf_counter()
+        self._auto_calibration_last_count = 0
+        self._auto_calibration_stall_ticks = 0
+        self._auto_calibration_positive_pwm_increases_count = None
+        self._auto_calibration_center_count = 0
+        self._auto_calibration_left_target = self._auto_calibration_center_count - target_counts
+        self._auto_calibration_right_target = self._auto_calibration_center_count + target_counts
+        self._auto_calibration_last_pwm_command = 0
+        self._auto_calibration_progress_time = self._auto_calibration_phase_started
+        self._auto_calibration_probe_start_count = 0
+        self._auto_calibration_direction_flip_used = False
+        self._auto_center_left_count = self._auto_calibration_left_target
+        self._auto_center_right_count = self._auto_calibration_right_target
+        self._last_count_sample = None
+        self.append_log(
+            'Auto calibration started: current position stored as center, direction will be probed briefly, then +450 deg right, -450 deg left, and back to center.'
+        )
+        QMessageBox.information(
+            self,
+            'Auto Calibration Started',
+            'Keep your hands clear of the wheel.\n\n'
+            'The app will mark the current position as center, move to +450 deg, move across to -450 deg, then return to center.',
+        )
+
+    def _finish_auto_sweep_calibration(self, success: bool, message: str) -> None:
+        self._set_manual_controls_idle()
+        self._clear_device_motor_commands()
+        self._auto_calibration_active = False
+        self._auto_calibration_phase = ""
+        self._auto_calibration_stall_ticks = 0
+        self._auto_calibration_positive_pwm_increases_count = None
+        self._auto_calibration_last_pwm_command = 0
+        self._auto_calibration_progress_time = 0.0
+        self._auto_calibration_probe_start_count = 0
+        self._auto_calibration_direction_flip_used = False
+        self._last_count_sample = None
+        if self._auto_calibration_saved_runtime_enabled:
+            self.runtime_enable_checkbox.setChecked(True)
+        title = 'Auto Calibration Complete' if success else 'Auto Calibration Stopped'
+        if success:
+            QMessageBox.information(self, title, message)
+        else:
+            QMessageBox.warning(self, title, message)
+        self.append_log(message)
+
+    def _auto_calibration_pwm_for_phase(self) -> int:
+        return self._AUTO_SWEEP_FAST_PWM
+
+    def _auto_calibration_set_pwm(self, pwm: int) -> None:
+        if pwm != 0:
+            self.device.set_estop(False)
+            self.device.clear_faults()
+            self.device.set_motor_enabled(True)
+        self._auto_calibration_last_pwm_command = pwm
+        self.device.set_pwm_raw(int(self._apply_motor_dir(float(pwm))))
+
+    def _auto_calibration_begin_phase(self, phase: str, now: float) -> None:
+        self._auto_calibration_phase = phase
+        self._auto_calibration_phase_started = now
+        self._auto_calibration_progress_time = now
+
+    def _auto_calibration_update_direction_hint(self, delta: int) -> None:
+        if abs(delta) < 2 or self._auto_calibration_last_pwm_command == 0:
+            return
+        self._auto_calibration_positive_pwm_increases_count = (delta * self._auto_calibration_last_pwm_command) > 0
+        self._auto_calibration_progress_time = time.perf_counter()
+
+    def _auto_calibration_drive_toward(self, target_count: int) -> None:
+        error = target_count - self.last_state.encoder_count
+        if error == 0:
+            self._auto_calibration_set_pwm(0)
+            return
+        direction = 1 if error > 0 else -1
+        if self._auto_calibration_positive_pwm_increases_count is False:
+            direction *= -1
+        magnitude = abs(error)
+        if magnitude > 2200:
+            pwm = self._AUTO_SWEEP_FAST_PWM
+        elif magnitude > 900:
+            pwm = self._AUTO_SWEEP_MEDIUM_PWM
+        else:
+            pwm = self._AUTO_SWEEP_SLOW_PWM
+        self._auto_calibration_set_pwm(direction * pwm)
+
+    def _auto_calibration_near_target(self, target_count: int, count: int) -> bool:
+        return abs(target_count - count) <= self._AUTO_SWEEP_NEAR_TARGET_COUNTS
+
+    def _auto_calibration_try_flip_direction(self, now: float, message: str) -> bool:
+        if self._auto_calibration_direction_flip_used or self._auto_calibration_positive_pwm_increases_count is None:
+            return False
+        self._auto_calibration_direction_flip_used = True
+        self._auto_calibration_positive_pwm_increases_count = not self._auto_calibration_positive_pwm_increases_count
+        self._auto_calibration_phase_started = now
+        self._auto_calibration_progress_time = now
+        self.append_log(message)
+        return True
+
+    def _run_auto_sweep_calibration(self) -> None:
+        if not self._auto_calibration_active or not self.device.transport.connected:
+            return
+
+        now = time.perf_counter()
+        count = self.last_state.encoder_count
+        delta = count - self._auto_calibration_last_count
+        self._auto_calibration_last_count = count
+        self._auto_calibration_update_direction_hint(delta)
+
+        if self._auto_calibration_phase == "probe_direction":
+            probe_delta = count - self._auto_calibration_probe_start_count
+            if abs(probe_delta) < self._AUTO_SWEEP_PROBE_MAX_COUNTS:
+                self._auto_calibration_set_pwm(self._AUTO_SWEEP_PROBE_PWM)
+            else:
+                self._auto_calibration_set_pwm(0)
+            probe_delta = count - self._auto_calibration_probe_start_count
+            if abs(probe_delta) >= self._AUTO_SWEEP_PROBE_MIN_DELTA:
+                self._auto_calibration_positive_pwm_increases_count = probe_delta > 0
+                self._auto_calibration_set_pwm(0)
+                self.device.zero_encoder()
+                self.device.clear_faults()
+                self._auto_calibration_last_count = 0
+                self._auto_calibration_center_count = 0
+                self._auto_calibration_right_target = int(
+                    round(self._AUTO_SWEEP_CPR * self._AUTO_SWEEP_HALF_RANGE_DEG / 360.0)
+                )
+                self._auto_calibration_left_target = -int(
+                    round(self._AUTO_SWEEP_CPR * self._AUTO_SWEEP_HALF_RANGE_DEG / 360.0)
+                )
+                self.append_log(f'Direction probe complete at {probe_delta} counts. Re-zeroing before the actual sweep.')
+                self._auto_calibration_begin_phase("sweep_right", now)
+                return
+            if (now - self._auto_calibration_phase_started) > 1.2:
+                self._auto_calibration_set_pwm(0)
+                self._auto_calibration_positive_pwm_increases_count = True
+                self.device.zero_encoder()
+                self.device.clear_faults()
+                self._auto_calibration_last_count = 0
+                self._auto_calibration_center_count = 0
+                self._auto_calibration_right_target = int(
+                    round(self._AUTO_SWEEP_CPR * self._AUTO_SWEEP_HALF_RANGE_DEG / 360.0)
+                )
+                self._auto_calibration_left_target = -int(
+                    round(self._AUTO_SWEEP_CPR * self._AUTO_SWEEP_HALF_RANGE_DEG / 360.0)
+                )
+                self._auto_calibration_begin_phase("sweep_right", now)
+                self.append_log('Direction probe saw too little movement, falling back to default direction mapping and re-zeroing before the sweep.')
+                return
+
+        elif self._auto_calibration_phase == "sweep_right":
+            error = self._auto_calibration_right_target - count
+            if count > (self._auto_calibration_right_target + 600):
+                self._auto_calibration_set_pwm(0)
+                self._finish_auto_sweep_calibration(False, 'Auto calibration overshot past the +450 degree right target. Check motor direction and retry.')
+                return
+            if abs(error) <= self._AUTO_SWEEP_TARGET_TOLERANCE_COUNTS:
+                self._auto_calibration_set_pwm(0)
+                self._auto_calibration_direction_flip_used = False
+                self.append_log('Right marker reached at +450 deg from the starting center.')
+                self._auto_calibration_begin_phase("sweep_left", now)
+                return
+            self._auto_calibration_drive_toward(self._auto_calibration_right_target)
+            if (now - self._auto_calibration_progress_time) > self._AUTO_SWEEP_STALL_SECONDS and self._auto_calibration_near_target(self._auto_calibration_right_target, count):
+                self._auto_calibration_set_pwm(0)
+                self._auto_calibration_direction_flip_used = False
+                self.append_log('Right marker accepted near +450 deg after encoder movement stalled.')
+                self._auto_calibration_begin_phase("sweep_left", now)
+                return
+            if (now - self._auto_calibration_phase_started) > 12.0:
+                self._finish_auto_sweep_calibration(False, 'Timed out before reaching the +450 degree right target.')
+                return
+
+        elif self._auto_calibration_phase == "sweep_left":
+            error = self._auto_calibration_left_target - count
+            if count < (self._auto_calibration_left_target - 600):
+                self._auto_calibration_set_pwm(0)
+                self._finish_auto_sweep_calibration(False, 'Auto calibration overshot past the -450 degree left target. Check motor direction and retry.')
+                return
+            if abs(error) <= self._AUTO_SWEEP_TARGET_TOLERANCE_COUNTS:
+                self._auto_calibration_set_pwm(0)
+                self.append_log('Left marker reached at -450 deg from the starting center.')
+                self._auto_calibration_begin_phase("return_center", now)
+                return
+            self._auto_calibration_drive_toward(self._auto_calibration_left_target)
+            if (now - self._auto_calibration_progress_time) > self._AUTO_SWEEP_STALL_SECONDS and self._auto_calibration_near_target(self._auto_calibration_left_target, count):
+                self._auto_calibration_set_pwm(0)
+                self.append_log('Left marker accepted near -450 deg after encoder movement stalled.')
+                self._auto_calibration_begin_phase("return_center", now)
+                return
+            if (now - self._auto_calibration_progress_time) > self._AUTO_SWEEP_STALL_SECONDS:
+                if self._auto_calibration_try_flip_direction(now, 'Left sweep stalled, flipping motor/encoder direction assumption and retrying.'):
+                    return
+            if (now - self._auto_calibration_phase_started) > 14.0:
+                self._finish_auto_sweep_calibration(False, 'Timed out before reaching the -450 degree left target.')
+                return
+
+        elif self._auto_calibration_phase == "return_center":
+            error = self._auto_calibration_center_count - count
+            if abs(error) <= self._AUTO_SWEEP_TARGET_TOLERANCE_COUNTS:
+                self._auto_calibration_set_pwm(0)
+                self.device.zero_encoder()
+                self.encoder_offset_spin.setValue(0.0)
+                self.encoder_cpr_spin.setValue(self._AUTO_SWEEP_CPR)
+                self.encoder_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+                self.virtual_steer_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+                self._sync_settings_from_ui()
+                self._save_active_profile()
+                self._finish_auto_sweep_calibration(
+                    True,
+                    'Wheel centered and zeroed.\n'
+                    'CPR has been set to 8000.\n'
+                    'Logical wheel range has been set to 900 deg.',
+                )
+                return
+            self._auto_calibration_drive_toward(self._auto_calibration_center_count)
+            if (now - self._auto_calibration_progress_time) > self._AUTO_SWEEP_STALL_SECONDS and self._auto_calibration_near_target(self._auto_calibration_center_count, count):
+                self._auto_calibration_set_pwm(0)
+                self.device.zero_encoder()
+                self.encoder_offset_spin.setValue(0.0)
+                self.encoder_cpr_spin.setValue(self._AUTO_SWEEP_CPR)
+                self.encoder_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+                self.virtual_steer_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+                self._sync_settings_from_ui()
+                self._save_active_profile()
+                self._finish_auto_sweep_calibration(
+                    True,
+                    'Wheel centered and zeroed after a near-target return.\n'
+                    'CPR has been set to 8000.\n'
+                    'Logical wheel range has been set to 900 deg.',
+                )
+                return
+            if (now - self._auto_calibration_phase_started) > 12.0:
+                self._finish_auto_sweep_calibration(False, 'Timed out while returning to center.')
+                return
 
     def capture_current_min_values(self) -> None:
         self.brake_min_spin.setValue(self.last_state.brake_raw)
@@ -697,15 +1172,18 @@ class MainWindow(QMainWindow):
         else:
             self.telemetry_status_label.setText(
                 'Waiting for live ETS2 telemetry from the installed game plugin or an HTTP bridge on 127.0.0.1:25555. '
-                'FFB output is held at zero until telemetry is available.'
+                'Passive centering stays active, while road and truck effects wait for telemetry.'
             )
             self.telemetry_status_label.setStyleSheet('color: #f87171;')
         controller_status = self.virtual_controller.status()
         self.controller_status_label.setText(controller_status.message)
         self.controller_status_label.setStyleSheet('color: #4ade80;' if controller_status.active else 'color: #60a5fa;')
-        if self.runtime_enable_checkbox.isChecked() and self.device.transport.connected:
+        if self._auto_calibration_active:
+            self.last_force = 0.0
+            self.telemetry_force_label.setText('AUTO')
+        elif self.runtime_enable_checkbox.isChecked() and self._ffb_armed and self.device.transport.connected:
             command = self.ffb_model.compute(telemetry, self.current_angle, self.current_speed, self.profile, test_mode=self.test_mode_checkbox.isChecked())
-            command = ForceCommand(constant=self._apply_motor_dir(command.constant), spring_gain=command.spring_gain, spring_center_deg=self.profile.encoder.center_offset_deg, damper_gain=command.damper_gain, friction_gain=command.friction_gain, vibration_gain=command.vibration_gain, vibration_freq_hz=command.vibration_freq_hz, impulse_torque=self._apply_motor_dir(command.impulse_torque), impulse_duration_ms=command.impulse_duration_ms, debug_total=self._apply_motor_dir(command.debug_total))
+            command = ForceCommand(constant=self._apply_motor_dir(command.constant), spring_gain=command.spring_gain, spring_center_deg=self._ffb_center_deg, damper_gain=command.damper_gain, friction_gain=command.friction_gain, vibration_gain=command.vibration_gain, vibration_freq_hz=command.vibration_freq_hz, impulse_torque=self._apply_motor_dir(command.impulse_torque), impulse_duration_ms=command.impulse_duration_ms, debug_total=self._apply_motor_dir(command.debug_total))
             self.last_force = command.debug_total
             self.telemetry_force_label.setText(f'{command.debug_total:.3f}')
             self.runtime_plot.push(command.debug_total)
@@ -719,6 +1197,8 @@ class MainWindow(QMainWindow):
 
     def on_state_changed(self, state: DeviceState) -> None:
         self.last_state = state
+        if not state.connected and self._ffb_armed:
+            self._set_ffb_armed(False)
         self.current_angle = self._encoder_angle(state.encoder_count)
         self.current_speed = self._encoder_speed(state.encoder_count)
         direction = 'Right' if self.current_speed > 0.5 else 'Left' if self.current_speed < -0.5 else 'Stopped'
@@ -747,6 +1227,7 @@ class MainWindow(QMainWindow):
         self.wheel_view.setAngle(self.current_angle)
         self.encoder_plot.push(self.current_angle)
         self.pedal_plot.push(state.accel_norm - state.brake_norm)
+        self._run_auto_sweep_calibration()
 
     def append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)

@@ -106,6 +106,17 @@ void setZeroOffset(int32_t offset_counts) { g_zero_offset = offset_counts; }
 void zeroAtCurrentPosition() {
   noInterrupts();
   g_zero_offset = g_count;
+  g_fault = false;
+  g_edge_interval_us = 0;
+  g_last_edge_us = 0;
+  g_direction = 0;
+  interrupts();
+  g_speed_deg_s = 0.0f;
+}
+
+void clearFault() {
+  noInterrupts();
+  g_fault = false;
   interrupts();
 }
 

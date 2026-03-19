@@ -92,9 +92,10 @@ void sendPacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uint8
   const size_t frame_length = crc_offset + 2U;
   bool sent = false;
   if (g_send_callback != nullptr) {
-    sent = g_send_callback(frame, frame_length);
-  } else if (g_serial != nullptr) {
-    sent = g_serial->write(frame, frame_length) == frame_length;
+    sent = g_send_callback(frame, frame_length) || sent;
+  }
+  if (g_serial != nullptr) {
+    sent = (g_serial->write(frame, frame_length) == frame_length) || sent;
   }
   if (sent) {
     ++g_tx_packets;
@@ -124,6 +125,10 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_ENABLE:
       if (length == 1U) {
         effects.motor_enabled = payload[0] != 0U;
+        if (!effects.motor_enabled) {
+          effects.raw_pwm_override = false;
+          effects.raw_pwm = 0;
+        }
         sendAck(sequence, command);
       }
       return;
@@ -201,7 +206,7 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_PWM_RAW: {
       int16_t pwm = 0;
       if (readPayload(payload, length, pwm)) {
-        effects.raw_pwm_override = true;
+        effects.raw_pwm_override = pwm != 0;
         effects.raw_pwm = pwm;
         control::notifyMotorTestCommand();
         sendAck(sequence, command);
@@ -209,6 +214,8 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
       return;
     }
     case CMD_ZERO_ENCODER:
+      effects.raw_pwm_override = false;
+      effects.raw_pwm = 0;
       control::zeroEncoder();
       sendAck(sequence, command);
       return;
@@ -236,6 +243,10 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
     case CMD_SET_ESTOP:
       if (length == 1U) {
         effects.estop = payload[0] != 0U;
+        if (effects.estop) {
+          effects.raw_pwm_override = false;
+          effects.raw_pwm = 0;
+        }
         sendAck(sequence, command);
       }
       return;
@@ -243,6 +254,8 @@ void handlePacket(uint8_t command, uint8_t sequence, const uint8_t* payload, uin
       usb_protocol::sendStatus(sequence);
       return;
     case CMD_CLEAR_FAULTS:
+      effects.raw_pwm_override = false;
+      effects.raw_pwm = 0;
       control::clearFaults();
       sendAck(sequence, command);
       return;
@@ -257,13 +270,15 @@ namespace usb_protocol {
 
 void init(Stream& serial_port) {
   g_serial = &serial_port;
-  g_send_callback = nullptr;
 }
 
 void init(SendCallback send_callback) {
-  g_serial = nullptr;
   g_send_callback = send_callback;
 }
+
+void attachSerial(Stream& serial_port) { g_serial = &serial_port; }
+
+void attachSendCallback(SendCallback send_callback) { g_send_callback = send_callback; }
 
 void process() {
   if (g_serial == nullptr) {

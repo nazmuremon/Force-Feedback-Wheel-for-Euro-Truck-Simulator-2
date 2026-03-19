@@ -1,0 +1,22 @@
+﻿2026-03-18 21:57:20,227 [1   ] [INFO ] Running application on Microsoft Windows NT 6.2.9200.0 (64-bit) 
+2026-03-18 21:57:20,479 [1   ] [INFO ] Checking plugin DLL files...
+2026-03-18 21:57:20,480 [1   ] [INFO ] Validating ETS2 path: 'C:\Euro Truck Simulator' ... OK
+2026-03-18 21:57:20,581 [1   ] [INFO ] Checking ACL rule status...
+2026-03-18 21:57:20,584 [1   ] [INFO ] Running command line: 
+netsh http show urlacl url=http://+:25555/
+2026-03-18 21:57:27,538 [1   ] [INFO ] Running application on Microsoft Windows NT 6.2.9200.0 (64-bit) 
+2026-03-18 21:57:27,652 [1   ] [INFO ] Checking plugin DLL files...
+2026-03-18 21:57:27,653 [1   ] [INFO ] Validating ETS2 path: 'C:\Euro Truck Simulator' ... OK
+2026-03-18 21:57:27,659 [1   ] [INFO ] Checking ACL rule status...
+2026-03-18 21:57:27,660 [1   ] [INFO ] Running command line: 
+netsh http show urlacl url=http://+:25555/
+2026-03-18 21:57:32,796 [1   ] [INFO ] Adding ACL rule...
+2026-03-18 21:57:32,797 [1   ] [INFO ] Running command line: 
+netsh http add urlacl url=http://+:25555/ user="\Everyone"
+2026-03-18 21:57:37,151 [1   ] [INFO ] Found following network interfaces: 
+'{01880638-7035-4EDB-9017-4A61882D4B04}': 'Ethernet' (Down), 
+'{2EA40790-A570-4AED-95A0-55F6438F116E}': 'Local Area Connection* 1' (Down), 
+'{C4B1F443-6721-437A-99FD-1CF328BFBC2B}': 'Local Area Connection* 10' (Down), 
+'{12DE5808-E087-4203-BC59-A0065EBB1E76}': 'Wi-Fi' (Up), 
+'{72117405-CA24-47C2-9190-42BC81487BC5}': 'Bluetooth Network Connection' (Down), 
+'{B8A29FBE-D25A-11F0-9032-806E6F6E6963}': 'Loopback Pseudo-Interface 1' (Up)

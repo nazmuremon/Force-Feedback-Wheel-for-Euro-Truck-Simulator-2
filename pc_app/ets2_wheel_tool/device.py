@@ -8,7 +8,15 @@ from PySide6.QtCore import QObject, Signal
 
 from . import protocol
 from .ffb import ForceCommand
-from .hid_transport import HidDeviceInfo, HidTransport
+from .hid_transport import HidTransport
+from .serial_transport import SerialTransport
+
+
+@dataclass
+class DeviceEndpoint:
+    path: str
+    label: str
+    transport: str
 
 
 @dataclass
@@ -45,8 +53,7 @@ class DeviceManager(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.transport = HidTransport()
-        self.transport.add_callback(self._handle_packet)
-        self.transport.log_callback = lambda msg: self.log_message.emit(msg)
+        self._configure_transport(self.transport)
         self.state = DeviceState()
         self._last_status_request_at = 0.0
         self._last_force_send_at = 0.0
@@ -63,11 +70,27 @@ class DeviceManager(QObject):
             debug_total=0.0,
         )
 
-    def devices(self) -> list[HidDeviceInfo]:
-        return self.transport.list_devices()
+    def _configure_transport(self, transport: HidTransport | SerialTransport) -> None:
+        self.transport = transport
+        self.transport.add_callback(self._handle_packet)
+        self.transport.log_callback = lambda msg: self.log_message.emit(msg)
+
+    def devices(self) -> list[DeviceEndpoint]:
+        devices: list[DeviceEndpoint] = []
+        for device in HidTransport.list_devices():
+            devices.append(DeviceEndpoint(path=device.path, label=device.label, transport="hid"))
+        for port in SerialTransport.list_port_infos():
+            devices.append(DeviceEndpoint(path=f"serial:{port.port}", label=port.label, transport="serial"))
+        return devices
 
     def connect_path(self, path: str) -> None:
-        self.transport.connect(path)
+        self.disconnect()
+        if path.startswith("serial:"):
+            self._configure_transport(SerialTransport())
+            self.transport.connect(path.split(":", 1)[1])
+        else:
+            self._configure_transport(HidTransport())
+            self.transport.connect(path)
         self.state.connected = False
         self.state.path = path
         self.request_status()
@@ -126,6 +149,10 @@ class DeviceManager(QObject):
 
     def trigger_impulse(self, torque: float, duration_ms: int) -> None:
         self.transport.send(protocol.CMD_TRIGGER_IMPULSE, protocol.pack_impulse(torque, duration_ms))
+
+    def reset_force_state(self) -> None:
+        self._last_force_send_at = 0.0
+        self._reset_force_cache()
 
     def capture_pedal_min(self) -> None:
         self.transport.send(protocol.CMD_CAPTURE_PEDAL_MIN)

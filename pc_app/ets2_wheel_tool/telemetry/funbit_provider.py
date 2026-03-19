@@ -3,9 +3,12 @@ from __future__ import annotations
 import ctypes
 import json
 import mmap
+import subprocess
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from ..config import app_root
 from ..ffb import TelemetrySample
 from .base import TelemetryProvider
 
@@ -156,6 +159,7 @@ class FunbitTelemetryProvider(TelemetryProvider):
             "http://127.0.0.1:25555/api/telemetry",
         )
         self.endpoint_label = "127.0.0.1:25555"
+        self._server_launch_attempted = False
 
     def read(self) -> TelemetrySample:
         shared_sample = self._read_shared_memory()
@@ -172,6 +176,7 @@ class FunbitTelemetryProvider(TelemetryProvider):
                 continue
 
         if not payload:
+            self._ensure_local_server_running()
             return TelemetrySample(
                 connected=False,
                 source=f"ets2-plugin offline / ets2-http offline ({self.endpoint_label})",
@@ -224,3 +229,36 @@ class FunbitTelemetryProvider(TelemetryProvider):
             suspension_bump=abs(float(data.navigationSpeedLimit)) * 0.0,
             collision=float(data.wearEngine) * 0.0,
         )
+
+    def _ensure_local_server_running(self) -> None:
+        if self._server_launch_attempted:
+            return
+
+        self._server_launch_attempted = True
+        server_exe = self._find_server_executable()
+        if server_exe is None:
+            return
+
+        try:
+            subprocess.Popen(
+                [str(server_exe)],
+                cwd=str(server_exe.parent),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0),
+            )
+        except OSError:
+            pass
+
+    def _find_server_executable(self) -> Path | None:
+        candidates = (
+            app_root() / "ets2_telemetry_server" / "Ets2Telemetry.exe",
+            app_root() / ".research" / "ets2-telemetry-server" / "server" / "Ets2Telemetry.exe",
+            Path(__file__).resolve().parents[3] / ".research" / "ets2-telemetry-server" / "server" / "Ets2Telemetry.exe",
+        )
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None

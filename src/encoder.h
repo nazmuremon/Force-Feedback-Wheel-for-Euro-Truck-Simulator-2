@@ -17,6 +17,7 @@ void update();
 EncoderSnapshot getSnapshot();
 void setZeroOffset(int32_t offset_counts);
 void zeroAtCurrentPosition();
+void clearFault();
 int32_t getRawCount();
 float countsToDegrees(int32_t counts);
 bool isMoving();

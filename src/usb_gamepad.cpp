@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "app_config.h"
+#include "hid_ffb.h"
 #include "usb_protocol.h"
 #include "usbd_customhid.h"
 #include "usbd_desc.h"
@@ -12,7 +13,7 @@
 
 namespace {
 
-constexpr uint8_t kReportIdGamepad = 0x01;
+constexpr uint8_t kReportIdWheelInput = 0x01;
 constexpr uint8_t kReportIdCommandOut = 0x02;
 constexpr uint8_t kReportIdStatusIn = 0x03;
 constexpr uint8_t kReportIdCommandFeature = 0x04;
@@ -20,10 +21,10 @@ constexpr uint8_t kReportIdStatusFeature = 0x05;
 constexpr size_t kHidReportSize = 64;
 constexpr size_t kHidPayloadSize = kHidReportSize - 1U;
 
-struct __attribute__((packed)) GamepadReport {
+struct __attribute__((packed)) WheelInputReport {
   uint8_t report_id;
   uint16_t buttons;
-  int16_t steer;
+  int16_t steering;
   uint16_t accel;
   uint16_t brake;
 };
@@ -37,16 +38,18 @@ struct __attribute__((packed)) TransportReport {
 USBD_HandleTypeDef g_usb_device;
 bool g_initialized = false;
 uint32_t g_last_report_us = 0;
-GamepadReport g_last_report{kReportIdGamepad, 0, 0, 0, 0};
+WheelInputReport g_last_report{kReportIdWheelInput, 0, 0, 0, 0};
 TransportReport g_pending_transport_report{};
 bool g_transport_pending = false;
 uint8_t g_feature_status_report[kHidReportSize]{};
 
 constexpr uint8_t kGamepadReportDescriptor[] = {
-    0x05, 0x01,        // Usage Page (Generic Desktop)
-    0x09, 0x05,        // Usage (Game Pad)
+    // Stable runtime profile: wheel-style input plus vendor transport for the
+    // PC helper app that computes force feedback from telemetry.
+    0x05, 0x02,        // Usage Page (Simulation Controls)
+    0x09, 0x02,        // Usage (Automobile Simulation Device)
     0xA1, 0x01,        // Collection (Application)
-    0x85, kReportIdGamepad,  //   Report ID
+    0x85, kReportIdWheelInput,  //   Report ID
     0x05, 0x09,        //   Usage Page (Button)
     0x19, 0x01,        //   Usage Minimum (Button 1)
     0x29, 0x10,        //   Usage Maximum (Button 16)
@@ -55,19 +58,15 @@ constexpr uint8_t kGamepadReportDescriptor[] = {
     0x75, 0x01,        //   Report Size (1)
     0x95, 0x10,        //   Report Count (16)
     0x81, 0x02,        //   Input (Data,Var,Abs)
-    0x05, 0x01,        //   Usage Page (Generic Desktop)
+    0x05, 0x02,        //   Usage Page (Simulation Controls)
     0x16, 0x01, 0x80,  //   Logical Minimum (-32767)
     0x26, 0xFF, 0x7F,  //   Logical Maximum (32767)
     0x75, 0x10,        //   Report Size (16)
     0x95, 0x01,        //   Report Count (1)
-    0x09, 0x30,        //   Usage (X)
+    0x09, 0xC8,        //   Usage (Steering)
     0x81, 0x02,        //   Input (Data,Var,Abs)
     0x15, 0x00,        //   Logical Minimum (0)
     0x26, 0xFF, 0x7F,  //   Logical Maximum (32767)
-    0x95, 0x02,        //   Report Count (2)
-    0x09, 0x32,        //   Usage (Z)
-    0x09, 0x35,        //   Usage (Rz)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
     0xC0,              // End Collection
     0x06, 0x00, 0xFF,  // Usage Page (Vendor Defined 0xFF00)
     0x09, 0x01,        // Usage (0x01)
@@ -93,6 +92,9 @@ constexpr uint8_t kGamepadReportDescriptor[] = {
     0xB1, 0x02,        //   Feature (Data,Var,Abs)
     0xC0,              // End Collection
 };
+
+static_assert(sizeof(kGamepadReportDescriptor) == USBD_CUSTOM_HID_REPORT_DESC_SIZE,
+              "HID report descriptor size macro is out of sync with the descriptor bytes");
 
 int8_t customHidInit() { return 0; }
 
@@ -133,8 +135,13 @@ int8_t customHidOutEvent(uint8_t event_idx, uint8_t state) {
   return 0;
 }
 
-uint8_t* customHidGetReport(uint16_t* report_length) {
+uint8_t* customHidGetReport(uint8_t report_id, uint8_t report_type, uint16_t* report_length) {
   if (report_length == nullptr) {
+    return nullptr;
+  }
+
+  if (report_id != kReportIdStatusFeature) {
+    *report_length = 0U;
     return nullptr;
   }
 
@@ -171,11 +178,11 @@ uint16_t normalizedUnsignedAxis(float value) {
   return static_cast<uint16_t>(value * 32767.0f);
 }
 
-void sendReport(const GamepadReport& report) {
+void sendReport(const WheelInputReport& report) {
   if (!g_initialized) {
     return;
   }
-  if (USBD_CUSTOM_HID_SendReport(&g_usb_device, reinterpret_cast<uint8_t*>(const_cast<GamepadReport*>(&report)),
+  if (USBD_CUSTOM_HID_SendReport(&g_usb_device, reinterpret_cast<uint8_t*>(const_cast<WheelInputReport*>(&report)),
                                  sizeof(report)) == USBD_OK) {
     g_last_report = report;
   }
@@ -249,10 +256,10 @@ void update(float wheel_angle_deg, float brake_norm, float accel_norm) {
   }
   g_last_report_us = now_us;
 
-  GamepadReport report{};
-  report.report_id = kReportIdGamepad;
+  WheelInputReport report{};
+  report.report_id = kReportIdWheelInput;
   report.buttons = 0;
-  report.steer = normalizedSignedAxis(wheel_angle_deg / (app::kWheelRangeDeg * 0.5f));
+  report.steering = normalizedSignedAxis(wheel_angle_deg / (app::kWheelRangeDeg * 0.5f));
   report.accel = normalizedUnsignedAxis(accel_norm);
   report.brake = normalizedUnsignedAxis(brake_norm);
 

@@ -41,6 +41,15 @@ struct ControlSnapshot {
   uint32_t last_command_age_ms;
 };
 
+struct HostFfbOverlay {
+  bool active;
+  float constant_torque;
+  float spring_gain;
+  float spring_center_deg;
+  float damper_gain;
+  float friction_gain;
+};
+
 namespace control {
 
 void init();
@@ -49,6 +58,8 @@ void updateFast();
 void updateControl();
 ControlSnapshot getSnapshot();
 ControlEffects& effects();
+void setHostFfbOverlay(const HostFfbOverlay& overlay);
+void clearHostFfbOverlay();
 void clearFaults();
 void zeroEncoder();
 void triggerImpulse(float torque, uint32_t duration_ms);
