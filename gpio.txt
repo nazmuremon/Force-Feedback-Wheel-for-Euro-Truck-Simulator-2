@@ -1,0 +1,40 @@
+Board: STM32 NUCLEO-G431KB
+MCU: STM32G431KB
+Framework: Arduino via PlatformIO
+Default PlatformIO env: nucleo_g431kb_usb_gamepad
+
+GPIO / wiring info:
+- Encoder A: D3
+- Encoder B: D4
+- Motor RPWM (BTS7960): D9
+- Motor LPWM (BTS7960): D11
+- Motor R_EN: D6
+- Motor L_EN: D5
+- Brake potentiometer: A0
+- Accelerator potentiometer: A1
+- Native USB D+: D2 / PA12
+- Native USB D-: D10 / PA11
+- ST-LINK USB: for flashing/debug only
+- Native MCU USB on PA11/PA12: runtime HID wheel/controller link
+
+Motor driver:
+- BTS7960
+- RPWM -> D9
+- LPWM -> D11
+- R_EN -> D6
+- L_EN -> D5
+- Common ground required between STM32 and motor supply
+
+Encoder:
+- Quadrature encoder on D3/D4
+- Configured CPR in project: 8000 counts per revolution
+
+Pedals:
+- Brake analog input: A0
+- Throttle analog input: A1
+
+USB/HID:
+- Board acts as a native USB HID gamepad/FFB wheel in env `nucleo_g431kb_usb_gamepad`
+- Custom USB PID: 0x57FF
+- USB product string: DIY FFB Wheel
+- USB manufacturer string: DIY Wheel Project

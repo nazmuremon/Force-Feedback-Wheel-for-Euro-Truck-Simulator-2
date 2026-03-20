@@ -23,9 +23,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
 Name: "vigemdriver"; Description: "Install virtual controller driver (ViGEmBus)"; GroupDescription: "Drivers:"; Flags: checkedonce
+Name: "ets2plugin"; Description: "Install ETS2 telemetry plugin into Documents"; GroupDescription: "Game integration:"; Flags: checkedonce
 
 [Files]
 Source: "..\dist\ETS2WheelTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\ETS2WheelTool\_internal\ets2_telemetry_server\Ets2Plugins\win_x64\plugins\ets2-telemetry-server.dll"; DestDir: "{userdocs}\Euro Truck Simulator 2\plugins"; DestName: "ets2-telemetry-server.dll"; Flags: ignoreversion; Tasks: ets2plugin; Check: Is64BitInstallMode
+Source: "..\dist\ETS2WheelTool\_internal\ets2_telemetry_server\Ets2Plugins\win_x86\plugins\ets2-telemetry-server.dll"; DestDir: "{userdocs}\Euro Truck Simulator 2\plugins"; DestName: "ets2-telemetry-server.dll"; Flags: ignoreversion; Tasks: ets2plugin; Check: not Is64BitInstallMode
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
