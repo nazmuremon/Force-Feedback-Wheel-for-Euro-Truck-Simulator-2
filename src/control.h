@@ -60,6 +60,7 @@ ControlSnapshot getSnapshot();
 ControlEffects& effects();
 void setHostFfbOverlay(const HostFfbOverlay& overlay);
 void clearHostFfbOverlay();
+void setHostActuatorsEnabled(bool enabled);
 void clearFaults();
 void zeroEncoder();
 void triggerImpulse(float torque, uint32_t duration_ms);

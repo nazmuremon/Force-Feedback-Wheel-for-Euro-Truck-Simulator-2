@@ -6,6 +6,7 @@ namespace {
 
 ControlEffects g_effects{};
 HostFfbOverlay g_host_ffb{};
+bool g_host_actuators_enabled = false;
 uint32_t g_last_command_ms = 0;
 uint32_t g_last_motor_test_ms = 0;
 uint32_t g_fault_flags = FAULT_MOTOR_DISABLED;
@@ -31,6 +32,7 @@ void init() {
   g_last_motor_test_ms = 0;
   g_start_ms = millis();
   g_host_ffb = HostFfbOverlay{};
+  g_host_actuators_enabled = false;
 }
 
 void markCommandReceived() { g_last_command_ms = millis(); }
@@ -48,10 +50,11 @@ void updateControl() {
   if (g_effects.estop) {
     g_fault_flags |= FAULT_ESTOP;
   }
-  if (!g_effects.motor_enabled) {
+  const bool motor_enabled = g_effects.motor_enabled || g_host_actuators_enabled;
+  if (!motor_enabled) {
     g_fault_flags |= FAULT_MOTOR_DISABLED;
   }
-  if ((now - g_last_command_ms) > app::kCommTimeoutMs) {
+  if (!g_host_actuators_enabled && (now - g_last_command_ms) > app::kCommTimeoutMs) {
     g_fault_flags |= FAULT_COMM_TIMEOUT;
   }
 
@@ -93,7 +96,8 @@ void updateControl() {
   }
 
   const float half_range = app::kWheelRangeDeg * 0.5f;
-  if (fabsf(enc.angle_deg) > (half_range - app::kWheelSoftEndstopMarginDeg)) {
+  const bool near_soft_endstop = fabsf(enc.angle_deg) > (half_range - app::kWheelSoftEndstopMarginDeg);
+  if (near_soft_endstop) {
     const float overflow = fabsf(enc.angle_deg) - (half_range - app::kWheelSoftEndstopMarginDeg);
     torque += ((enc.angle_deg > 0.0f) ? -1.0f : 1.0f) *
               overflow * app::kSoftwareEndstopGain / app::kWheelSoftEndstopMarginDeg;
@@ -106,15 +110,21 @@ void updateControl() {
     torque = 0.0f;
   }
 
-  const bool output_blocked = (g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ENCODER | FAULT_ESTOP)) != 0U;
+  const bool raw_pwm_driving_outward =
+      g_effects.raw_pwm_override && near_soft_endstop && ((enc.angle_deg * enc.speed_deg_s) > 0.0f);
+  const bool raw_pwm_past_limit =
+      g_effects.raw_pwm_override && (fabsf(enc.angle_deg) >= half_range);
+  const bool output_blocked =
+      (g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ENCODER | FAULT_ESTOP)) != 0U ||
+      raw_pwm_driving_outward || raw_pwm_past_limit;
   if (output_blocked) {
     torque = 0.0f;
     motor::setEnabled(false);
   } else {
-    motor::setEnabled(g_effects.motor_enabled);
+    motor::setEnabled(motor_enabled);
   }
 
-  if (!g_effects.motor_enabled || (g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ESTOP)) != 0U) {
+  if (!motor_enabled || (g_fault_flags & (FAULT_COMM_TIMEOUT | FAULT_ESTOP)) != 0U) {
     motor::stop();
     g_filtered_torque = 0.0f;
     g_output_torque = 0.0f;
@@ -148,6 +158,8 @@ ControlEffects& effects() { return g_effects; }
 void setHostFfbOverlay(const HostFfbOverlay& overlay) { g_host_ffb = overlay; }
 
 void clearHostFfbOverlay() { g_host_ffb = HostFfbOverlay{}; }
+
+void setHostActuatorsEnabled(bool enabled) { g_host_actuators_enabled = enabled; }
 
 void clearFaults() {
   g_fault_flags = FAULT_NONE;

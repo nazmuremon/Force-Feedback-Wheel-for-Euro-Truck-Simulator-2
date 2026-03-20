@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox
 
 from .config import APP_SETTINGS_PATH, BUNDLED_PROFILE_PATH, DEFAULT_PROFILE_PATH, AppSettings, WheelProfile
 from .device import DeviceManager, DeviceState
+from .ets2_setup import PluginInstallStatus, ensure_ets2_telemetry_plugin_installed
 from .ffb import ForceCommand, ForceFeedbackModel
 from .telemetry.funbit_provider import FunbitTelemetryProvider
 from .telemetry.mock_provider import MockTelemetryProvider
@@ -131,13 +132,20 @@ class MainWindow(QMainWindow):
     _AUTO_SWEEP_HALF_RANGE_DEG = _AUTO_SWEEP_RANGE_DEG / 2.0
     _AUTO_SWEEP_TARGET_TOLERANCE_COUNTS = 18
     _AUTO_SWEEP_NEAR_TARGET_COUNTS = 320
-    _AUTO_SWEEP_FAST_PWM = 140
-    _AUTO_SWEEP_MEDIUM_PWM = 120
-    _AUTO_SWEEP_SLOW_PWM = 96
-    _AUTO_SWEEP_PROBE_PWM = 110
+    _AUTO_SWEEP_FAST_PWM = 110
+    _AUTO_SWEEP_MEDIUM_PWM = 92
+    _AUTO_SWEEP_SLOW_PWM = 78
+    _AUTO_SWEEP_PROBE_PWM = 84
     _AUTO_SWEEP_PROBE_MIN_DELTA = 10
     _AUTO_SWEEP_PROBE_MAX_COUNTS = 180
     _AUTO_SWEEP_STALL_SECONDS = 1.2
+    _MANUAL_PWM_LIMIT = 90
+    _MANUAL_DRIVE_PULSE_MS = 350
+    _FAULT_COMM_TIMEOUT = 1 << 0
+    _FAULT_ENCODER = 1 << 1
+    _FAULT_ESTOP = 1 << 2
+    _FAULT_MOTOR_DISABLED = 1 << 3
+    _FAULT_SOFT_ENDSTOP = 1 << 4
 
     def __init__(self) -> None:
         super().__init__()
@@ -158,16 +166,29 @@ class MainWindow(QMainWindow):
             self.profile = WheelProfile.load(self.profile_path)
         else:
             self.profile_path = DEFAULT_PROFILE_PATH
+        if self.profile_path == DEFAULT_PROFILE_PATH:
+            if not self.profile.test_mode:
+                self.profile.runtime_enabled = True
+            if self.profile.virtual_steering_range_deg < 720.0:
+                self.profile.virtual_steering_range_deg = self._AUTO_SWEEP_RANGE_DEG
         self._migrated_profile_data = False
         self.telemetry_provider = FunbitTelemetryProvider()
         self.mock_provider = MockTelemetryProvider()
         self.virtual_controller = VirtualControllerBridge()
+        self._plugin_install_status = PluginInstallStatus(
+            ok=False,
+            source_path=None,
+            target_path=None,
+            message='ETS2 telemetry plugin has not been checked yet.',
+        )
         self.last_state = DeviceState()
         self.last_force = 0.0
         self.current_angle = 0.0
         self.current_speed = 0.0
         self._ffb_armed = False
         self._ffb_center_deg = 0.0
+        self._runtime_polarity_error_streak = 0
+        self._runtime_polarity_cooldown_until = 0.0
         self._last_count_sample: tuple[int, float] | None = None
         self._auto_center_left_count: int | None = None
         self._auto_center_right_count: int | None = None
@@ -186,6 +207,10 @@ class MainWindow(QMainWindow):
         self._auto_calibration_progress_time = 0.0
         self._auto_calibration_probe_start_count = 0
         self._auto_calibration_direction_flip_used = False
+        self._last_fault_flags_seen = 0
+        self._manual_pulse_timer = QTimer(self)
+        self._manual_pulse_timer.setSingleShot(True)
+        self._manual_pulse_timer.timeout.connect(self.stop_manual_motor_test)
 
         root_widget = QWidget()
         self.setCentralWidget(root_widget)
@@ -234,10 +259,11 @@ class MainWindow(QMainWindow):
 
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self.poll_device)
-        self.status_timer.start(80)
+        self.status_timer.start(50)
         self.runtime_timer = QTimer(self)
         self.runtime_timer.timeout.connect(self.update_runtime)
-        self.runtime_timer.start(20)
+        self.runtime_timer.start(5)
+        self._ensure_ets2_runtime_prerequisites()
 
     def _apply_theme(self) -> None:
         self.setStyleSheet("""
@@ -282,17 +308,33 @@ class MainWindow(QMainWindow):
             return
         self.device.set_pwm_raw(0)
         self.device.set_constant_torque(0.0)
-        self.device.set_spring(0.0, self.profile.encoder.center_offset_deg)
+        self.device.set_spring(0.0, 0.0)
         self.device.set_damper(0.0)
         self.device.set_friction(0.0)
         self.device.set_vibration(0.0, 0.0)
 
+    def _ensure_ets2_runtime_prerequisites(self) -> None:
+        self._plugin_install_status = ensure_ets2_telemetry_plugin_installed()
+        self.append_log(self._plugin_install_status.message)
+
+    def _should_auto_arm_runtime(self, telemetry_connected: bool) -> bool:
+        return (
+            self.runtime_enable_checkbox.isChecked()
+            and not self.test_mode_checkbox.isChecked()
+            and telemetry_connected
+            and self.device.transport.connected
+            and not self._auto_calibration_active
+            and not self._ffb_armed
+        )
+
     def _set_ffb_armed(self, armed: bool) -> None:
         self._ffb_armed = armed and self.device.transport.connected
+        self._runtime_polarity_error_streak = 0
+        self._runtime_polarity_cooldown_until = 0.0
         if self._ffb_armed:
-            self._ffb_center_deg = self.current_angle
+            self._ffb_center_deg = 0.0
         if not self._ffb_armed:
-            self._ffb_center_deg = self.current_angle
+            self._ffb_center_deg = 0.0
             self._clear_device_motor_commands()
         if hasattr(self, "ffb_arm_button"):
             self.ffb_arm_button.setText('Disarm FFB' if self._ffb_armed else 'Arm FFB')
@@ -303,11 +345,81 @@ class MainWindow(QMainWindow):
     def toggle_ffb_arm(self) -> None:
         self._set_ffb_armed(not self._ffb_armed)
 
+    def _auto_flip_runtime_motor_direction(self, reason: str) -> None:
+        new_value = not self.motor_invert_checkbox.isChecked()
+        with QSignalBlocker(self.motor_invert_checkbox):
+            self.motor_invert_checkbox.setChecked(new_value)
+        self._sync_settings_from_ui()
+        self._save_active_profile()
+        self._runtime_polarity_error_streak = 0
+        self._runtime_polarity_cooldown_until = time.perf_counter() + 1.0
+        self._clear_device_motor_commands()
+        self.append_log(
+            f'{reason} Auto-flipped motor direction to {"inverted" if new_value else "normal"} and saved the profile.'
+        )
+
+    def _monitor_runtime_centering_direction(self, relative_angle: float, requested_torque: float) -> None:
+        if not self._ffb_armed or self._auto_calibration_active:
+            self._runtime_polarity_error_streak = 0
+            return
+        if time.perf_counter() < self._runtime_polarity_cooldown_until:
+            return
+        if abs(relative_angle) < 25.0 or abs(requested_torque) < 0.05 or abs(self.current_speed) < 30.0:
+            self._runtime_polarity_error_streak = max(0, self._runtime_polarity_error_streak - 1)
+            return
+
+        # When the wheel is displaced from center, centering should drive it back
+        # toward zero, not farther away. If we repeatedly see the opposite, flip
+        # the motor direction automatically.
+        torque_is_centering = (relative_angle * requested_torque) < 0.0
+        moving_away_from_center = (relative_angle * self.current_speed) > 0.0
+        if torque_is_centering and moving_away_from_center:
+            self._runtime_polarity_error_streak += 1
+        else:
+            self._runtime_polarity_error_streak = max(0, self._runtime_polarity_error_streak - 1)
+
+        if self._runtime_polarity_error_streak >= 4:
+            self._auto_flip_runtime_motor_direction(
+                'Runtime FFB was pushing the wheel farther away from center.'
+            )
+
     def run_full_speed_motor(self, direction: int) -> None:
-        self._set_manual_pwm(self.manual_pwm_slider.maximum() * direction)
+        self._set_ffb_armed(False)
+        self._set_manual_pwm(self._MANUAL_PWM_LIMIT * direction)
+        self._manual_pulse_timer.start(self._MANUAL_DRIVE_PULSE_MS)
+        self.append_log(
+            f'Manual drive pulse started at PWM {self._MANUAL_PWM_LIMIT * direction} for {self._MANUAL_DRIVE_PULSE_MS} ms.'
+        )
 
     def stop_manual_motor_test(self) -> None:
+        self._manual_pulse_timer.stop()
         self._set_manual_pwm(0)
+
+    def _describe_fault_flags(self, flags: int) -> str:
+        names: list[str] = []
+        if flags & self._FAULT_COMM_TIMEOUT:
+            names.append('COMM_TIMEOUT')
+        if flags & self._FAULT_ENCODER:
+            names.append('ENCODER')
+        if flags & self._FAULT_ESTOP:
+            names.append('ESTOP')
+        if flags & self._FAULT_MOTOR_DISABLED:
+            names.append('MOTOR_DISABLED')
+        if flags & self._FAULT_SOFT_ENDSTOP:
+            names.append('SOFT_ENDSTOP')
+        return ', '.join(names) if names else 'NONE'
+
+    def _handle_fault_transition(self, new_faults: int) -> None:
+        self.append_log(f'Controller fault: 0x{new_faults:08X} ({self._describe_fault_flags(new_faults)})')
+        critical = self._FAULT_COMM_TIMEOUT | self._FAULT_ENCODER | self._FAULT_ESTOP | self._FAULT_SOFT_ENDSTOP
+        if new_faults & critical:
+            self.stop_manual_motor_test()
+            self._clear_device_motor_commands()
+            if self._auto_calibration_active:
+                self._finish_auto_sweep_calibration(
+                    False,
+                    f'Auto calibration stopped because the controller reported {self._describe_fault_flags(new_faults)}.',
+                )
 
     def _encoder_angle(self, count: int) -> float:
         angle = (count * 360.0 / max(1, self.profile.encoder.counts_per_rev)) + self.profile.encoder.center_offset_deg
@@ -529,6 +641,12 @@ class MainWindow(QMainWindow):
         left_btn.clicked.connect(lambda: self.capture_manual_marker("left"))
         apply_btn = QPushButton('Save Manual Calibration')
         apply_btn.clicked.connect(self.apply_manual_calibration)
+        lock_left_btn = QPushButton('Capture Left Lock')
+        lock_left_btn.clicked.connect(lambda: self.capture_auto_center_edge("left"))
+        lock_right_btn = QPushButton('Capture Right Lock')
+        lock_right_btn.clicked.connect(lambda: self.capture_auto_center_edge("right"))
+        lock_apply_btn = QPushButton('Center From Locks')
+        lock_apply_btn.clicked.connect(self.apply_auto_center_from_edges)
         cal_form.addRow('CPR', self.encoder_cpr_spin)
         cal_form.addRow('Wheel Range', self.encoder_range_spin)
         cal_form.addRow('Game Steering Range', self.virtual_steer_range_spin)
@@ -538,6 +656,9 @@ class MainWindow(QMainWindow):
         cal_form.addRow(right_btn)
         cal_form.addRow(left_btn)
         cal_form.addRow(apply_btn)
+        cal_form.addRow(lock_left_btn)
+        cal_form.addRow(lock_right_btn)
+        cal_form.addRow(lock_apply_btn)
         top.addWidget(live, 1)
         top.addWidget(cal, 1)
         wheel_box = QGroupBox('Visual Wheel')
@@ -560,15 +681,15 @@ class MainWindow(QMainWindow):
         self.motor_invert_checkbox.toggled.connect(self._sync_settings_from_ui)
         self.manual_torque_slider = make_slider(-45, 45, 0)
         self.manual_torque_slider.valueChanged.connect(lambda v: self.device.set_constant_torque(self._apply_motor_dir(v / 100.0)))
-        self.manual_pwm_slider = make_slider(-120, 120, 0)
+        self.manual_pwm_slider = make_slider(-self._MANUAL_PWM_LIMIT, self._MANUAL_PWM_LIMIT, 0)
         self.manual_pwm_slider.valueChanged.connect(lambda v: self.device.set_pwm_raw(int(self._apply_motor_dir(float(v)))))
         buttons = QHBoxLayout()
         vib_btn = QPushButton('Vibration Test'); vib_btn.clicked.connect(lambda: self.device.set_vibration(0.18, 32.0))
-        spring_btn = QPushButton('Spring Test'); spring_btn.clicked.connect(lambda: self.device.set_spring(0.22, self.profile.encoder.center_offset_deg))
+        spring_btn = QPushButton('Spring Test'); spring_btn.clicked.connect(lambda: self.device.set_spring(0.22, 0.0))
         damper_btn = QPushButton('Damper Test'); damper_btn.clicked.connect(lambda: self.device.set_damper(0.18))
         bump_btn = QPushButton('Bump Pulse'); bump_btn.clicked.connect(lambda: self.device.trigger_impulse(self._apply_motor_dir(0.2), 75))
-        full_fwd_btn = QPushButton('Full Speed Forward'); full_fwd_btn.clicked.connect(lambda: self.run_full_speed_motor(1))
-        full_rev_btn = QPushButton('Full Speed Reverse'); full_rev_btn.clicked.connect(lambda: self.run_full_speed_motor(-1))
+        full_fwd_btn = QPushButton('Drive Pulse +'); full_fwd_btn.clicked.connect(lambda: self.run_full_speed_motor(1))
+        full_rev_btn = QPushButton('Drive Pulse -'); full_rev_btn.clicked.connect(lambda: self.run_full_speed_motor(-1))
         stop_btn = QPushButton('Stop Motor'); stop_btn.clicked.connect(self.stop_manual_motor_test)
         stop_btn.setStyleSheet('background: #b91c1c; color: white; border: none; border-radius: 8px; padding: 8px 12px;')
         buttons.addWidget(vib_btn); buttons.addWidget(spring_btn); buttons.addWidget(damper_btn); buttons.addWidget(bump_btn)
@@ -627,7 +748,7 @@ class MainWindow(QMainWindow):
         group = QGroupBox('FFB Tuning')
         form = QFormLayout(group)
         self.profile_sliders: dict[str, QSlider] = {}
-        fields = [('master_gain', 'Master Gain', 0, 100), ('spring_gain', 'Center Spring', 0, 100), ('damper_gain', 'Damper', 0, 100), ('friction_gain', 'Friction', 0, 100), ('vibration_gain', 'Road Vibration', 0, 100), ('bump_gain', 'Bumps', 0, 100), ('collision_gain', 'Collision Kick', 0, 100), ('speed_sensitivity', 'Speed Sensitivity', 0, 100), ('torque_limit', 'Torque Limit', 5, 45)]
+        fields = [('master_gain', 'Master Gain', 0, 100), ('spring_gain', 'Center Spring', 0, 100), ('damper_gain', 'Damper', 0, 100), ('friction_gain', 'Friction', 0, 100), ('vibration_gain', 'Road Vibration', 0, 100), ('bump_gain', 'Bumps', 0, 100), ('collision_gain', 'Collision Kick', 0, 100), ('speed_sensitivity', 'Speed Sensitivity', 0, 100), ('torque_limit', 'Torque Limit', 5, 100)]
         for name, label, low, high in fields:
             slider = make_slider(low, high, int(getattr(self.profile, name) * 100))
             slider.valueChanged.connect(self.on_profile_changed)
@@ -654,6 +775,8 @@ class MainWindow(QMainWindow):
         self.telemetry_rpm_label = QLabel('0 rpm')
         self.telemetry_brake_label = QLabel('0.00')
         self.telemetry_accel_label = QLabel('0.00')
+        self.telemetry_bump_label = QLabel('0.00')
+        self.telemetry_collision_label = QLabel('0.00')
         self.telemetry_force_label = QLabel('0.000')
         self.controller_steer_label = QLabel('0.00')
         self.controller_status_label.setWordWrap(True)
@@ -667,15 +790,18 @@ class MainWindow(QMainWindow):
         form.addRow('Engine RPM', self.telemetry_rpm_label)
         form.addRow('Brake', self.telemetry_brake_label)
         form.addRow('Throttle', self.telemetry_accel_label)
+        form.addRow('Road Bump', self.telemetry_bump_label)
+        form.addRow('Impact', self.telemetry_collision_label)
         form.addRow('Steer Axis', self.controller_steer_label)
         form.addRow('Output Torque', self.telemetry_force_label)
         layout.addWidget(info)
         bridge_box = QGroupBox('Real ETS2 Setup')
         bridge_layout = QVBoxLayout(bridge_box)
         bridge_hint = QLabel(
-            'For live Euro Truck Simulator 2 use, turn off Virtual test mode and launch ETS2 with the telemetry '
-            'plugin installed. This app will use the ETS2 shared-memory plugin path first and fall back to an '
-            'HTTP bridge on 127.0.0.1:25555 if available.'
+            'For live Euro Truck Simulator 2 use, turn off Virtual test mode, leave ETS2 in-game force feedback '
+            'disabled, and use the bundled telemetry/shared-memory plugin. This DIY wheel does not use the old '
+            'Logitech-only SCS forum FFB DLL directly; the helper app applies a similar force style from telemetry '
+            'and falls back to an HTTP bridge on 127.0.0.1:25555 if available.'
         )
         bridge_hint.setWordWrap(True)
         bridge_layout.addWidget(bridge_hint)
@@ -814,9 +940,16 @@ class MainWindow(QMainWindow):
                 'Set center again and capture +450 and -450 more carefully.',
             )
             return
-        self.encoder_offset_spin.setValue(0.0)
-        self.encoder_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
-        self.virtual_steer_range_spin.setValue(self._AUTO_SWEEP_RANGE_DEG)
+        span_counts = self._auto_center_right_count - self._auto_center_left_count
+        midpoint_count = (self._auto_center_left_count + self._auto_center_right_count) / 2.0
+        degrees_per_count = 360.0 / self._AUTO_SWEEP_CPR
+        midpoint_angle = midpoint_count * degrees_per_count
+        if self.profile.encoder.invert_direction:
+            midpoint_angle = -midpoint_angle
+        wheel_range_deg = abs(span_counts) * degrees_per_count
+        self.encoder_offset_spin.setValue(-midpoint_angle)
+        self.encoder_range_spin.setValue(max(90.0, min(2160.0, wheel_range_deg)))
+        self.virtual_steer_range_spin.setValue(max(90.0, min(2160.0, wheel_range_deg)))
         self._sync_settings_from_ui()
         self._save_active_profile()
         QMessageBox.information(
@@ -824,7 +957,8 @@ class MainWindow(QMainWindow):
             'Manual Calibration Saved',
             f'Right marker: {right_deg:.1f} deg\n'
             f'Left marker: {left_deg:.1f} deg\n'
-            'Center kept at 0 deg and wheel range saved as 900 deg.',
+            f'Calibrated center offset: {self.encoder_offset_spin.value():.2f} deg\n'
+            f'Wheel range: {self.encoder_range_spin.value():.1f} deg',
         )
 
     def capture_auto_center_edge(self, side: str) -> None:
@@ -1158,21 +1292,31 @@ class MainWindow(QMainWindow):
 
     def update_runtime(self) -> None:
         telemetry = self.mock_provider.read() if self.test_mode_checkbox.isChecked() else self.telemetry_provider.read()
+        if self._should_auto_arm_runtime(telemetry.connected):
+            self._set_ffb_armed(True)
+            self.append_log('Live ETS2 telemetry detected. Auto-arming helper FFB around the current wheel position.')
+        elif self._ffb_armed and (not self.runtime_enable_checkbox.isChecked() or (not self.test_mode_checkbox.isChecked() and not telemetry.connected)):
+            self._set_ffb_armed(False)
         self.telemetry_source_label.setText(telemetry.source)
         self.telemetry_speed_label.setText(f'{telemetry.speed_mps:.1f} m/s')
         self.telemetry_rpm_label.setText(f'{telemetry.engine_rpm:.0f} rpm')
         self.telemetry_brake_label.setText(f'{telemetry.brake:.2f}')
         self.telemetry_accel_label.setText(f'{telemetry.throttle:.2f}')
+        self.telemetry_bump_label.setText(f'{telemetry.suspension_bump:.2f}')
+        self.telemetry_collision_label.setText(f'{telemetry.collision:.2f}')
         if self.test_mode_checkbox.isChecked():
             self.telemetry_status_label.setText('Virtual test mode is active. Forces are generated without the ETS2 game.')
             self.telemetry_status_label.setStyleSheet('color: #facc15;')
         elif telemetry.connected:
-            self.telemetry_status_label.setText('Live ETS2 telemetry detected. Runtime FFB is following the game.')
+            self.telemetry_status_label.setText(
+                'Live ETS2 telemetry detected. Helper-app force feedback is driving the DIY wheel and the virtual '
+                'Xbox controller is active.'
+            )
             self.telemetry_status_label.setStyleSheet('color: #4ade80;')
         else:
             self.telemetry_status_label.setText(
-                'Waiting for live ETS2 telemetry from the installed game plugin or an HTTP bridge on 127.0.0.1:25555. '
-                'Passive centering stays active, while road and truck effects wait for telemetry.'
+                'Waiting for live ETS2 telemetry from the installed plugin or an HTTP bridge on 127.0.0.1:25555. '
+                f'{self._plugin_install_status.message}'
             )
             self.telemetry_status_label.setStyleSheet('color: #f87171;')
         controller_status = self.virtual_controller.status()
@@ -1182,8 +1326,21 @@ class MainWindow(QMainWindow):
             self.last_force = 0.0
             self.telemetry_force_label.setText('AUTO')
         elif self.runtime_enable_checkbox.isChecked() and self._ffb_armed and self.device.transport.connected:
-            command = self.ffb_model.compute(telemetry, self.current_angle, self.current_speed, self.profile, test_mode=self.test_mode_checkbox.isChecked())
-            command = ForceCommand(constant=self._apply_motor_dir(command.constant), spring_gain=command.spring_gain, spring_center_deg=self._ffb_center_deg, damper_gain=command.damper_gain, friction_gain=command.friction_gain, vibration_gain=command.vibration_gain, vibration_freq_hz=command.vibration_freq_hz, impulse_torque=self._apply_motor_dir(command.impulse_torque), impulse_duration_ms=command.impulse_duration_ms, debug_total=self._apply_motor_dir(command.debug_total))
+            relative_angle = self.current_angle - self._ffb_center_deg
+            command = self.ffb_model.compute(telemetry, relative_angle, self.current_speed, self.profile, test_mode=self.test_mode_checkbox.isChecked())
+            self._monitor_runtime_centering_direction(relative_angle, command.debug_total)
+            command = ForceCommand(
+                constant=self._apply_motor_dir(command.constant),
+                spring_gain=0.0,
+                spring_center_deg=self._ffb_center_deg,
+                damper_gain=0.0,
+                friction_gain=0.0,
+                vibration_gain=command.vibration_gain,
+                vibration_freq_hz=command.vibration_freq_hz,
+                impulse_torque=self._apply_motor_dir(command.impulse_torque),
+                impulse_duration_ms=command.impulse_duration_ms,
+                debug_total=self._apply_motor_dir(command.debug_total),
+            )
             self.last_force = command.debug_total
             self.telemetry_force_label.setText(f'{command.debug_total:.3f}')
             self.runtime_plot.push(command.debug_total)
@@ -1205,7 +1362,12 @@ class MainWindow(QMainWindow):
         range_pct = 100.0 * min(1.0, abs(self.current_angle) / max(1.0, self.profile.encoder.wheel_range_deg * 0.5))
         self.connection_state_label.setText('Connected' if state.connected else 'Disconnected')
         self.version_label.setText(state.version or '-')
-        self.fault_label.setText(f'0x{state.fault_flags:08X}')
+        if state.fault_flags != self._last_fault_flags_seen:
+            new_faults = state.fault_flags & ~self._last_fault_flags_seen
+            if new_faults:
+                self._handle_fault_transition(new_faults)
+            self._last_fault_flags_seen = state.fault_flags
+        self.fault_label.setText(f'0x{state.fault_flags:08X} ({self._describe_fault_flags(state.fault_flags)})')
         self.encoder_count_label.setText(str(state.encoder_count))
         self.encoder_angle_label.setText(f'{self.current_angle:.2f} deg')
         self.encoder_speed_label.setText(f'{self.current_speed:.2f} deg/s')

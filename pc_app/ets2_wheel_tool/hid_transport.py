@@ -2,13 +2,53 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+import importlib.util
+from pathlib import Path
+import sys
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 
-import hid
+try:
+    import hid  # type: ignore[import-not-found]
+    _HID_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - depends on local hidapi runtime
+    hid = None  # type: ignore[assignment]
+    _HID_IMPORT_ERROR = exc
 
 from . import protocol
+
+
+def _load_hid_fallback() -> Any | None:
+    search_roots = [Path(__file__).resolve().parents[2]]
+    if getattr(sys, "frozen", False):
+        bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        search_roots.insert(0, bundle_root)
+        search_roots.insert(0, Path(sys.executable).resolve().parent)
+
+    candidate_names = (
+        "hid.cp311-win_amd64.pyd",
+        "hid.pyd",
+    )
+    for root in search_roots:
+        for name in candidate_names:
+            candidate = root / name
+            if not candidate.exists():
+                continue
+            spec = importlib.util.spec_from_file_location("hid", candidate)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    return None
+
+
+if hid is None:
+    fallback_module = _load_hid_fallback()
+    if fallback_module is not None:
+        hid = fallback_module  # type: ignore[assignment]
+        _HID_IMPORT_ERROR = None
 
 
 @dataclass
@@ -42,7 +82,7 @@ class HidTransport:
     USE_FEATURE_TRANSPORT = True
 
     def __init__(self) -> None:
-        self._device: hid.device | None = None
+        self._device: Any | None = None
         self._thread: threading.Thread | None = None
         self._running = False
         self._parser = protocol.PacketParser()
@@ -54,6 +94,8 @@ class HidTransport:
 
     @staticmethod
     def list_devices() -> list[HidDeviceInfo]:
+        if hid is None:
+            return []
         devices: list[HidDeviceInfo] = []
         for entry in hid.enumerate():
             vendor_id = int(entry.get("vendor_id") or 0)
@@ -98,6 +140,11 @@ class HidTransport:
 
     def connect(self, path: str) -> None:
         self.disconnect()
+        if hid is None:
+            message = "HID support is unavailable"
+            if _HID_IMPORT_ERROR is not None:
+                message = f"{message}: {_HID_IMPORT_ERROR}"
+            raise RuntimeError(message)
         device = hid.device()
         open_path: bytes = path.encode("utf-8")
         for entry in self.list_devices():

@@ -5,7 +5,9 @@
 .vscode/ipch
 build/
 build_onefile/
+build_*/
 dist/
 dist_onefile/
+dist_*/
 __pycache__/
 *.pyc

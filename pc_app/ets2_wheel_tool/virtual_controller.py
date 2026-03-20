@@ -70,7 +70,7 @@ class VirtualControllerBridge:
         steer = max(-1.0, min(1.0, steer))
         brake = max(0.0, min(1.0, brake))
         throttle = max(0.0, min(1.0, throttle))
-        state = (round(steer, 3), round(brake, 3), round(throttle, 3))
+        state = (round(steer, 4), round(brake, 4), round(throttle, 4))
         if state == self._last_state:
             return
         self._controller.left_joystick_float(steer, 0.0)

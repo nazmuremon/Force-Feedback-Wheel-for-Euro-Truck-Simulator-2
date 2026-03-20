@@ -79,8 +79,7 @@ void loop() {
 
   if (app::kNativeUsbGamepadMode) {
     const ControlSnapshot snapshot = control::getSnapshot();
-    usb_gamepad::update(snapshot.encoder.angle_deg, snapshot.pedals.brake.normalized,
-                        snapshot.pedals.accel.normalized);
+    usb_gamepad::update(snapshot);
   }
 
   const uint32_t now_ms = millis();

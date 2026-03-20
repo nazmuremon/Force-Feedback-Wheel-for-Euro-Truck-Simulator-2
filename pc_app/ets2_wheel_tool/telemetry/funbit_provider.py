@@ -4,6 +4,7 @@ import ctypes
 import json
 import mmap
 import subprocess
+import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -160,6 +161,15 @@ class FunbitTelemetryProvider(TelemetryProvider):
         )
         self.endpoint_label = "127.0.0.1:25555"
         self._server_launch_attempted = False
+        self._last_time = time.perf_counter()
+        self._last_accel_x = 0.0
+        self._last_accel_y = 0.0
+        self._last_accel_z = 0.0
+        self._last_cabin_y = 0.0
+        self._last_cabin_z = 0.0
+        self._last_wear_total = 0.0
+        self._bump_envelope = 0.0
+        self._collision_envelope = 0.0
 
     def read(self) -> TelemetrySample:
         shared_sample = self._read_shared_memory()
@@ -184,10 +194,17 @@ class FunbitTelemetryProvider(TelemetryProvider):
 
         truck = payload.get("truck", {})
         game = payload.get("game", {})
-        navigation = payload.get("navigation", {})
         acc = truck.get("acceleration", {})
+        cabin = truck.get("cabin", {})
+        wear_total = (
+            float(truck.get("wearEngine", 0.0))
+            + float(truck.get("wearTransmission", 0.0))
+            + float(truck.get("wearCabin", 0.0))
+            + float(truck.get("wearChassis", 0.0))
+            + float(truck.get("wearWheels", 0.0))
+        )
 
-        return TelemetrySample(
+        return self._compose_sample(
             connected=bool(game.get("connected", True)),
             source=f"ets2-http live ({self.endpoint_label})",
             speed_mps=float(truck.get("speed", 0.0)),
@@ -198,8 +215,9 @@ class FunbitTelemetryProvider(TelemetryProvider):
             accel_x=float(acc.get("x", 0.0)) if isinstance(acc, dict) else 0.0,
             accel_y=float(acc.get("y", 0.0)) if isinstance(acc, dict) else 0.0,
             accel_z=float(acc.get("z", 0.0)) if isinstance(acc, dict) else 0.0,
-            suspension_bump=abs(float(navigation.get("speedLimit", 0.0))) * 0.0,
-            collision=float(truck.get("wearEngine", 0.0)) * 0.0,
+            cabin_y=float(cabin.get("y", 0.0)) if isinstance(cabin, dict) else 0.0,
+            cabin_z=float(cabin.get("z", 0.0)) if isinstance(cabin, dict) else 0.0,
+            wear_total=wear_total,
         )
 
     def _read_shared_memory(self) -> TelemetrySample | None:
@@ -215,7 +233,14 @@ class FunbitTelemetryProvider(TelemetryProvider):
             return None
 
         connected = bool(data.time or data.engineRpm or data.speed or data.userThrottle or data.userBrake)
-        return TelemetrySample(
+        wear_total = float(
+            data.wearEngine
+            + data.wearTransmission
+            + data.wearCabin
+            + data.wearChassis
+            + data.wearWheels
+        )
+        return self._compose_sample(
             connected=connected,
             source="ets2-plugin shared-memory",
             speed_mps=float(data.speed),
@@ -226,8 +251,77 @@ class FunbitTelemetryProvider(TelemetryProvider):
             accel_x=float(data.accelerationX),
             accel_y=float(data.accelerationY),
             accel_z=float(data.accelerationZ),
-            suspension_bump=abs(float(data.navigationSpeedLimit)) * 0.0,
-            collision=float(data.wearEngine) * 0.0,
+            cabin_y=float(data.cabinPositionY),
+            cabin_z=float(data.cabinPositionZ),
+            wear_total=wear_total,
+        )
+
+    def _compose_sample(
+        self,
+        *,
+        connected: bool,
+        source: str,
+        speed_mps: float,
+        engine_rpm: float,
+        throttle: float,
+        brake: float,
+        steer_input: float,
+        accel_x: float,
+        accel_y: float,
+        accel_z: float,
+        cabin_y: float,
+        cabin_z: float,
+        wear_total: float,
+    ) -> TelemetrySample:
+        now = time.perf_counter()
+        dt = max(0.01, min(0.2, now - self._last_time))
+        self._last_time = now
+
+        jerk_x = (accel_x - self._last_accel_x) / dt
+        jerk_y = (accel_y - self._last_accel_y) / dt
+        jerk_z = (accel_z - self._last_accel_z) / dt
+        cabin_heave_speed = (cabin_y - self._last_cabin_y) / dt
+        cabin_surge_speed = (cabin_z - self._last_cabin_z) / dt
+        wear_delta = max(0.0, wear_total - self._last_wear_total)
+
+        self._last_accel_x = accel_x
+        self._last_accel_y = accel_y
+        self._last_accel_z = accel_z
+        self._last_cabin_y = cabin_y
+        self._last_cabin_z = cabin_z
+        self._last_wear_total = wear_total
+
+        speed_factor = min(1.0, max(0.0, speed_mps) / 28.0)
+
+        bump_drive = (
+            abs(jerk_z) * 0.0028
+            + abs(jerk_y) * 0.0018
+            + abs(cabin_heave_speed) * 0.35
+            + abs(cabin_surge_speed) * 0.12
+        ) * (0.30 + 0.70 * speed_factor)
+        self._bump_envelope = max(bump_drive, self._bump_envelope * (0.80 if connected else 0.55))
+
+        collision_drive = (
+            max(0.0, abs(jerk_x) - 14.0) * 0.004
+            + max(0.0, abs(jerk_y) - 14.0) * 0.003
+            + max(0.0, abs(jerk_z) - 18.0) * 0.003
+            + wear_delta * 40.0
+        )
+        self._collision_envelope = max(collision_drive, self._collision_envelope * (0.70 if connected else 0.45))
+
+        return TelemetrySample(
+            connected=connected,
+            source=source,
+            speed_mps=speed_mps,
+            engine_rpm=engine_rpm,
+            throttle=throttle,
+            brake=brake,
+            steer_input=steer_input,
+            accel_x=accel_x,
+            accel_y=accel_y,
+            accel_z=accel_z,
+            suspension_bump=min(1.0, self._bump_envelope),
+            collision=min(1.0, self._collision_envelope),
         )
 
     def _ensure_local_server_running(self) -> None:

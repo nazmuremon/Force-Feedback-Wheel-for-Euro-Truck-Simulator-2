@@ -30,17 +30,27 @@ This repo now targets a DIY Euro Truck Simulator 2 force-feedback wheel built ar
 
 ## ETS2 runtime note
 
-For real Euro Truck Simulator 2 driving, the PC app expects a local telemetry bridge on `127.0.0.1:25555`.
+For real Euro Truck Simulator 2 driving, the PC app expects the bundled ETS2 telemetry/shared-memory plugin, with optional HTTP bridge fallback on `127.0.0.1:25555`.
+
+The SCS forum `FFB plugin v2.6` is a separate Logitech-wheel plugin. For this DIY STM32 wheel, we keep ETS2 in-game FFB off and let the helper app generate the wheel torque from telemetry instead.
 
 Recommended order:
 
-1. Start the telemetry bridge.
-2. Launch ETS2 and confirm the bridge sees the game.
-3. Open the wheel app.
+1. Launch the wheel app so it can install the bundled ETS2 telemetry plugin if needed.
+2. Keep ETS2 in-game force feedback disabled.
+3. Launch ETS2. Optionally start an HTTP telemetry bridge on `127.0.0.1:25555` as a fallback path.
 4. Turn off `Virtual test mode`.
 5. Verify the `ETS2 Runtime` tab reports live telemetry before enabling motor torque.
 
 If the game telemetry is not available, the app now keeps FFB output at zero in live mode for safety.
+
+## Current app build
+
+For the current portable Windows test build in this workspace, use:
+
+- [`dist_game_targeted/ETS2WheelTool/ETS2WheelTool.exe`](/d:/stmtest/dist_game_targeted/ETS2WheelTool/ETS2WheelTool.exe)
+
+Older `dist_*` and `build_*` folders are generated test artifacts and can be deleted.
 
 ## Important note
 

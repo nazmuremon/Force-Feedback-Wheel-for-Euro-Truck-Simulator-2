@@ -9,17 +9,17 @@ namespace {
 
 constexpr uint8_t kReportTypeFeature = 0x03;
 
-constexpr uint8_t kReportIdPidState = 0x02;
-constexpr uint8_t kReportIdSetEffect = 0x01;
-constexpr uint8_t kReportIdSetConstantForce = 0x05;
-constexpr uint8_t kReportIdSetCondition = 0x03;
-constexpr uint8_t kReportIdEffectOperation = 0x0A;
-constexpr uint8_t kReportIdDeviceControl = 0x0C;
-constexpr uint8_t kReportIdDeviceGain = 0x0D;
+constexpr uint8_t kReportIdPidState = 0x10;
+constexpr uint8_t kReportIdSetEffect = 0x11;
+constexpr uint8_t kReportIdSetConstantForce = 0x12;
+constexpr uint8_t kReportIdSetCondition = 0x13;
+constexpr uint8_t kReportIdEffectOperation = 0x14;
+constexpr uint8_t kReportIdDeviceControl = 0x15;
+constexpr uint8_t kReportIdDeviceGain = 0x16;
 constexpr uint8_t kReportIdCreateNewEffect = 0x17;
 constexpr uint8_t kReportIdBlockLoad = 0x18;
 constexpr uint8_t kReportIdPool = 0x19;
-constexpr uint8_t kReportIdBlockFree = 0x0B;
+constexpr uint8_t kReportIdBlockFree = 0x1A;
 
 constexpr uint8_t kEffectTypeConstant = 1;
 constexpr uint8_t kEffectTypeSpring = 8;
@@ -105,8 +105,14 @@ struct __attribute__((packed)) BlockLoadFeatureReport {
 struct __attribute__((packed)) PoolFeatureReport {
   uint8_t report_id;
   uint16_t ram_pool_size;
+  uint16_t rom_pool_size;
   uint8_t max_simultaneous_effects;
   uint8_t flags;
+};
+
+struct __attribute__((packed)) DeviceGainFeatureReport {
+  uint8_t report_id;
+  uint8_t gain;
 };
 
 struct EffectSlot {
@@ -125,6 +131,9 @@ hid_ffb::DeviceState g_state{};
 EffectSlot g_slots[4]{};
 BlockLoadFeatureReport g_block_load_report{};
 PoolFeatureReport g_pool_report{};
+DeviceGainFeatureReport g_device_gain_report{};
+
+void refreshFeatureReports();
 
 float normalizedGain(uint8_t gain) { return static_cast<float>(gain) / 255.0f; }
 
@@ -158,6 +167,22 @@ EffectSlot* slotForIndex(uint8_t effect_block_index) {
   return &g_slots[effect_block_index - 1U];
 }
 
+EffectSlot* ensureSlotAllocated(uint8_t effect_block_index, uint8_t effect_type) {
+  auto* slot = slotForIndex(effect_block_index);
+  if (slot == nullptr) {
+    return nullptr;
+  }
+  if (!slot->allocated) {
+    slot->allocated = true;
+    slot->configured = false;
+    slot->running = false;
+    slot->type = effect_type;
+    slot->gain = 255;
+    refreshFeatureReports();
+  }
+  return slot;
+}
+
 uint16_t ramPoolAvailable() {
   uint16_t used = 0U;
   for (const auto& slot : g_slots) {
@@ -174,8 +199,12 @@ void refreshFeatureReports() {
 
   g_pool_report.report_id = kReportIdPool;
   g_pool_report.ram_pool_size = kRamPoolSize;
+  g_pool_report.rom_pool_size = 0U;
   g_pool_report.max_simultaneous_effects = static_cast<uint8_t>(sizeof(g_slots) / sizeof(g_slots[0]));
   g_pool_report.flags = 0x01U;  // Device managed pool.
+
+  g_device_gain_report.report_id = kReportIdDeviceGain;
+  g_device_gain_report.gain = g_state.global_gain;
 }
 
 void stopAllEffects() {
@@ -233,6 +262,7 @@ void init() {
   }
   g_block_load_report = BlockLoadFeatureReport{};
   g_pool_report = PoolFeatureReport{};
+  g_device_gain_report = DeviceGainFeatureReport{};
   refreshFeatureReports();
 }
 
@@ -273,13 +303,17 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
         return false;
       }
       const auto& report = *reinterpret_cast<const SetEffectReport*>(data);
-      auto* slot = slotForIndex(report.effect_block_index);
-      if (slot == nullptr || !slot->allocated || !isSupportedEffectType(report.effect_type)) {
+      if (!isSupportedEffectType(report.effect_type)) {
+        return false;
+      }
+      auto* slot = ensureSlotAllocated(report.effect_block_index, report.effect_type);
+      if (slot == nullptr) {
         return false;
       }
       slot->configured = true;
       slot->type = report.effect_type;
-      slot->gain = report.gain;
+      slot->gain = (report.gain == 0U) ? 255U : report.gain;
+      slot->running = true;
       return true;
     }
     case kReportIdSetConstantForce: {
@@ -287,13 +321,15 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
         return false;
       }
       const auto& report = *reinterpret_cast<const SetConstantForceReport*>(data);
-      auto* slot = slotForIndex(report.effect_block_index);
-      if (slot == nullptr || !slot->allocated) {
+      auto* slot = ensureSlotAllocated(report.effect_block_index, kEffectTypeConstant);
+      if (slot == nullptr) {
         return false;
       }
       slot->configured = true;
       slot->type = kEffectTypeConstant;
       slot->magnitude = report.magnitude;
+      slot->running = true;
+      g_state.last_constant_magnitude = report.magnitude;
       return true;
     }
     case kReportIdSetCondition: {
@@ -301,8 +337,8 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
         return false;
       }
       const auto& report = *reinterpret_cast<const SetConditionReport*>(data);
-      auto* slot = slotForIndex(report.effect_block_index);
-      if (slot == nullptr || !slot->allocated) {
+      auto* slot = ensureSlotAllocated(report.effect_block_index, kEffectTypeSpring);
+      if (slot == nullptr) {
         return false;
       }
       if (report.parameter_block_offset != 0U) {
@@ -313,6 +349,7 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
       slot->condition_cp_offset = report.cp_offset;
       slot->condition_positive = report.positive_coefficient;
       slot->condition_negative = report.negative_coefficient;
+      slot->running = true;
       return true;
     }
     case kReportIdEffectOperation: {
@@ -320,8 +357,8 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
         return false;
       }
       const auto& report = *reinterpret_cast<const EffectOperationReport*>(data);
-      auto* slot = slotForIndex(report.effect_block_index);
-      if (slot == nullptr || !slot->allocated) {
+      auto* slot = ensureSlotAllocated(report.effect_block_index, kEffectTypeConstant);
+      if (slot == nullptr) {
         return false;
       }
       if (report.operation == kEffectOpStop) {
@@ -343,22 +380,29 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
         case kDeviceControlEnableActuators:
           g_state.actuators_enabled = true;
           g_state.device_paused = false;
+          control::setHostActuatorsEnabled(true);
+          control::markCommandReceived();
           return true;
         case kDeviceControlDisableActuators:
           g_state.actuators_enabled = false;
+          control::setHostActuatorsEnabled(false);
           stopAllEffects();
           return true;
         case kDeviceControlStopAllEffects:
           stopAllEffects();
+          control::markCommandReceived();
           return true;
         case kDeviceControlReset:
           init();
+          control::setHostActuatorsEnabled(false);
           return true;
         case kDeviceControlPause:
           g_state.device_paused = true;
+          control::markCommandReceived();
           return true;
         case kDeviceControlContinue:
           g_state.device_paused = false;
+          control::markCommandReceived();
           return true;
         default:
           return false;
@@ -370,6 +414,7 @@ bool handleReport(uint8_t report_id, const uint8_t* data, size_t length) {
       }
       const auto& report = *reinterpret_cast<const DeviceGainReport*>(data);
       g_state.global_gain = report.gain;
+      g_device_gain_report.gain = report.gain;
       return true;
     }
     case kReportIdCreateNewEffect: {
@@ -413,25 +458,86 @@ uint8_t* getFeatureReport(uint8_t report_id, uint8_t report_type, uint16_t* repo
       refreshFeatureReports();
       *report_length = sizeof(g_pool_report);
       return reinterpret_cast<uint8_t*>(&g_pool_report);
+    case kReportIdDeviceGain:
+      refreshFeatureReports();
+      *report_length = sizeof(g_device_gain_report);
+      return reinterpret_cast<uint8_t*>(&g_device_gain_report);
     default:
       return nullptr;
   }
 }
 
+size_t buildPidStateReport(uint8_t* report, size_t capacity) {
+  if (report == nullptr || capacity < 3U) {
+    return 0U;
+  }
+
+  uint8_t active_effect_index = 0U;
+  bool effect_playing = false;
+  for (uint8_t index = 0; index < 4U; ++index) {
+    if (!g_slots[index].running) {
+      continue;
+    }
+    active_effect_index = static_cast<uint8_t>(index + 1U);
+    effect_playing = true;
+    break;
+  }
+
+  const ControlSnapshot snapshot = control::getSnapshot();
+  uint8_t flags = 0U;
+  if (effect_playing) {
+    flags |= 0x01U;
+  }
+  if (g_state.device_paused) {
+    flags |= 0x02U;
+  }
+  if (g_state.actuators_enabled) {
+    flags |= 0x04U;
+  }
+  if ((snapshot.fault_flags & FAULT_ESTOP) == 0U) {
+    flags |= 0x08U;
+  }
+  if (snapshot.motor.enabled) {
+    flags |= 0x10U;
+  }
+  if (g_state.actuators_enabled && snapshot.motor.enabled && (snapshot.fault_flags == FAULT_NONE)) {
+    flags |= 0x20U;
+  }
+
+  report[0] = kReportIdPidState;
+  report[1] = active_effect_index;
+  report[2] = flags;
+  return 3U;
+}
+
 void update() {
   HostFfbOverlay overlay{};
+  g_state.any_effect_running = false;
+  g_state.first_slot_configured = g_slots[0].configured;
+  g_state.first_slot_type = g_slots[0].type;
+  g_state.first_slot_gain = g_slots[0].gain;
+  g_state.debug_constant_torque = 0.0f;
+
+  if (g_state.actuators_enabled) {
+    control::setHostActuatorsEnabled(true);
+    control::markCommandReceived();
+  } else {
+    control::setHostActuatorsEnabled(false);
+  }
 
   if (g_state.actuators_enabled && !g_state.device_paused) {
     for (const auto& slot : g_slots) {
       if (!slot.running) {
         continue;
       }
+      g_state.any_effect_running = true;
       overlay.active = true;
       const uint8_t effective_gain =
           static_cast<uint8_t>((static_cast<uint16_t>(slot.gain) * g_state.global_gain) / 255U);
       switch (slot.type) {
         case kEffectTypeConstant:
           overlay.constant_torque += signedTorque(slot.magnitude, effective_gain);
+          g_state.debug_constant_torque = overlay.constant_torque;
           break;
         case kEffectTypeSpring:
           overlay.spring_center_deg = 0.0f;

@@ -10,11 +10,15 @@ volatile uint32_t g_last_edge_us = 0;
 volatile uint32_t g_edge_interval_us = 0;
 volatile bool g_fault = false;
 volatile int8_t g_direction = 0;
+volatile uint8_t g_invalid_transition_streak = 0;
 int32_t g_zero_offset = 0;
 float g_speed_deg_s = 0.0f;
 uint32_t g_last_motion_ms = 0;
+uint8_t g_overspeed_streak = 0;
 
 constexpr uint32_t kMovementLedHoldMs = 120;
+constexpr uint8_t kInvalidTransitionFaultThreshold = 4;
+constexpr uint8_t kOverspeedFaultThreshold = 4;
 
 constexpr int8_t kTransitionTable[16] = {
     0, -1, 1, 0,
@@ -33,10 +37,18 @@ void handleEncoderEdge() {
   const uint32_t now = micros();
 
   if (delta == 0 && state != g_last_state) {
-    g_fault = true;
+    if (g_invalid_transition_streak < 0xFFU) {
+      ++g_invalid_transition_streak;
+    }
+    if (g_invalid_transition_streak >= kInvalidTransitionFaultThreshold) {
+      g_fault = true;
+    }
+    g_last_state = state;
+    return;
   }
 
   if (delta != 0) {
+    g_invalid_transition_streak = 0;
     g_count += delta;
     g_direction = (delta > 0) ? 1 : -1;
     g_last_motion_ms = millis();
@@ -81,6 +93,14 @@ void update() {
   }
 
   if (fabsf(g_speed_deg_s) > app::kWheelMaxSpeedDegPerSec) {
+    if (g_overspeed_streak < 0xFFU) {
+      ++g_overspeed_streak;
+    }
+  } else {
+    g_overspeed_streak = 0;
+  }
+
+  if (g_overspeed_streak >= kOverspeedFaultThreshold) {
     g_fault = true;
   }
 }
@@ -110,14 +130,18 @@ void zeroAtCurrentPosition() {
   g_edge_interval_us = 0;
   g_last_edge_us = 0;
   g_direction = 0;
+  g_invalid_transition_streak = 0;
   interrupts();
+  g_overspeed_streak = 0;
   g_speed_deg_s = 0.0f;
 }
 
 void clearFault() {
   noInterrupts();
   g_fault = false;
+  g_invalid_transition_streak = 0;
   interrupts();
+  g_overspeed_streak = 0;
 }
 
 int32_t getRawCount() {

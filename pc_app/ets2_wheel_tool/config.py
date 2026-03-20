@@ -23,23 +23,23 @@ def user_data_dir() -> Path:
 
 @dataclass
 class WheelProfile:
-    master_gain: float = 0.35
-    spring_gain: float = 0.28
-    damper_gain: float = 0.15
-    friction_gain: float = 0.08
+    master_gain: float = 0.60
+    spring_gain: float = 0.55
+    damper_gain: float = 0.28
+    friction_gain: float = 0.05
     vibration_gain: float = 0.08
     vibration_freq_hz: float = 28.0
     bump_gain: float = 0.22
     collision_gain: float = 0.30
-    speed_sensitivity: float = 0.65
+    speed_sensitivity: float = 0.85
     wheel_center_deg: float = 0.0
-    torque_limit: float = 0.45
+    torque_limit: float = 0.80
     last_port: str = ""
     start_with_windows: bool = False
     test_mode: bool = False
-    runtime_enabled: bool = False
+    runtime_enabled: bool = True
     virtual_controller_enabled: bool = True
-    virtual_steering_range_deg: float = 360.0
+    virtual_steering_range_deg: float = 900.0
     brake: "PedalCalibration" = field(default_factory=lambda: PedalCalibration())
     accel: "PedalCalibration" = field(default_factory=lambda: PedalCalibration())
     encoder: "EncoderCalibration" = field(default_factory=lambda: EncoderCalibration())
@@ -53,23 +53,23 @@ class WheelProfile:
     def load(cls, path: Path) -> "WheelProfile":
         raw = json.loads(path.read_text(encoding="utf-8"))
         return cls(
-            master_gain=raw.get("master_gain", 0.35),
-            spring_gain=raw.get("spring_gain", 0.28),
-            damper_gain=raw.get("damper_gain", 0.15),
-            friction_gain=raw.get("friction_gain", 0.08),
+            master_gain=raw.get("master_gain", 0.60),
+            spring_gain=raw.get("spring_gain", 0.55),
+            damper_gain=raw.get("damper_gain", 0.28),
+            friction_gain=raw.get("friction_gain", 0.05),
             vibration_gain=raw.get("vibration_gain", 0.08),
             vibration_freq_hz=raw.get("vibration_freq_hz", 28.0),
             bump_gain=raw.get("bump_gain", 0.22),
             collision_gain=raw.get("collision_gain", 0.30),
-            speed_sensitivity=raw.get("speed_sensitivity", 0.65),
+            speed_sensitivity=raw.get("speed_sensitivity", 0.85),
             wheel_center_deg=raw.get("wheel_center_deg", 0.0),
-            torque_limit=raw.get("torque_limit", 0.45),
+            torque_limit=raw.get("torque_limit", 0.80),
             last_port=raw.get("last_port", ""),
             start_with_windows=raw.get("start_with_windows", False),
             test_mode=raw.get("test_mode", False),
-            runtime_enabled=raw.get("runtime_enabled", False),
+            runtime_enabled=raw.get("runtime_enabled", True),
             virtual_controller_enabled=raw.get("virtual_controller_enabled", True),
-            virtual_steering_range_deg=raw.get("virtual_steering_range_deg", 360.0),
+            virtual_steering_range_deg=raw.get("virtual_steering_range_deg", 900.0),
             brake=PedalCalibration(**raw.get("brake", {})),
             accel=PedalCalibration(**raw.get("accel", {})),
             encoder=EncoderCalibration(**raw.get("encoder", {})),

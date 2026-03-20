@@ -21,7 +21,7 @@ This project builds a complete USB HID force-feedback wheel stack around an STM3
 - STM32 firmware for encoder, pedals, BTS7960 control, safety logic, and USB HID transport
 - Integrated Windows PySide6 setup and runtime tool
 - Virtual test mode for force tuning without ETS2
-- ETS2 live runtime support through a local telemetry bridge server on `127.0.0.1:25555`
+- ETS2 live runtime support through the bundled telemetry/shared-memory plugin, with HTTP bridge fallback on `127.0.0.1:25555`
 - Virtual Xbox controller output so ETS2 can detect a gaming controller on Windows
 - Wiring documentation, protocol specification, sample profile, and bring-up procedure
 
@@ -78,18 +78,27 @@ Output:
 dist\ETS2WheelTool\ETS2WheelTool.exe
 ```
 
+Current portable build kept in this workspace:
+
+```text
+dist_game_targeted\ETS2WheelTool\ETS2WheelTool.exe
+```
+
 ### Real ETS2 compatibility
 
 The Windows app is compatible with the actual Euro Truck Simulator 2 game through its live telemetry path, not only through virtual test mode.
 
+The SCS forum `FFB plugin v2.6` is a separate Logitech-wheel game plugin. This STM32 project does not load that DLL directly; instead, the desktop helper uses ETS2 telemetry and is tuned to mimic the same sharper-center, road-crown, load-vibration style on the DIY wheel.
+
 To use the real game:
 
-1. Run an ETS2 telemetry bridge that exposes HTTP on `127.0.0.1:25555`.
-2. Start ETS2 and make sure the bridge shows live game data.
-3. Open `ETS2WheelTool.exe`.
-4. Leave `Expose virtual Xbox controller` enabled so ETS2 sees a controller.
-5. Uncheck `Virtual test mode`.
-6. Confirm the `ETS2 Runtime` tab shows both the virtual controller and live telemetry before enabling torque.
+1. Let the app install the bundled ETS2 telemetry plugin/shared-memory DLL.
+2. Keep ETS2 in-game force feedback disabled so the DIY wheel only follows the helper app.
+3. Start ETS2. If you also run an HTTP telemetry bridge on `127.0.0.1:25555`, the app can use that as a fallback.
+4. Open `ETS2WheelTool.exe`.
+5. Leave `Expose virtual Xbox controller` enabled so ETS2 sees a controller.
+6. Uncheck `Virtual test mode`.
+7. Confirm the `ETS2 Runtime` tab shows both the virtual controller and live telemetry before enabling torque.
 
 If live telemetry is missing, the app now holds FFB output at zero in ETS2 mode instead of generating fallback forces.
 
@@ -101,8 +110,8 @@ You have two ways to use the PC software.
 
 Use this when you do not want an installer.
 
-1. Copy the folder [dist/ETS2WheelTool](D:/stmtest/dist/ETS2WheelTool) to the target PC.
-2. Run [dist/ETS2WheelTool/ETS2WheelTool.exe](D:/stmtest/dist/ETS2WheelTool/ETS2WheelTool.exe).
+1. Copy the folder [dist_game_targeted/ETS2WheelTool](/d:/stmtest/dist_game_targeted/ETS2WheelTool) to the target PC.
+2. Run [dist_game_targeted/ETS2WheelTool/ETS2WheelTool.exe](/d:/stmtest/dist_game_targeted/ETS2WheelTool/ETS2WheelTool.exe).
 3. If Windows SmartScreen warns on first launch, use `More info` then `Run anyway` if you trust the build.
 4. Connect the NUCLEO board's native USB wiring on `PA11/PA12` to the PC.
 5. Select the detected HID device in the app and connect.
@@ -157,13 +166,18 @@ That native mode uses one USB cable connected to the MCU `PA11/PA12` pins. In th
 5. Enable the motor with a very small torque command on the `Motor Test` tab.
 6. Confirm the commanded direction and stop immediately if it is reversed.
 7. Use `Virtual Test Mode` before trying ETS2 telemetry.
-8. When switching to the real game, disable `Virtual Test Mode` and verify the runtime status turns green for live ETS2 telemetry.
+8. When switching to the real game, disable `Virtual Test Mode`, keep ETS2 in-game FFB off, and verify the runtime status turns green for live ETS2 telemetry.
 
 ## Docs
 
 - Protocol: [`docs/PROTOCOL.md`](/d:/stmtest/docs/PROTOCOL.md)
 - Wiring: [`docs/WIRING.md`](/d:/stmtest/docs/WIRING.md)
 - Packaging scripts: [`packaging/build_windows.ps1`](/d:/stmtest/packaging/build_windows.ps1), [`packaging/build_installer.ps1`](/d:/stmtest/packaging/build_installer.ps1)
+
+## Repo Hygiene
+
+- Generated PyInstaller output folders such as `build_*` and `dist_*` are disposable local artifacts and should not be committed.
+- Keep only the latest portable build you actually want to test on the wheel.
 
 ## Assumptions
 

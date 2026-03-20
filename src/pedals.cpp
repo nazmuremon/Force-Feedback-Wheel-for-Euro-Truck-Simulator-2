@@ -17,6 +17,8 @@ struct PedalRuntime {
 PedalRuntime g_brake{app::kBrakeAdcPin, 0, 0.0f, 0.0f, 300, 3800, app::kBrakeInvertDefault};
 PedalRuntime g_accel{app::kAccelAdcPin, 0, 0.0f, 0.0f, 300, 3800, app::kAccelInvertDefault};
 
+constexpr float kAdcMax = 4095.0f;
+
 float normalize(const PedalRuntime& pedal) {
   const float span = static_cast<float>(max<uint16_t>(1, pedal.max_raw - pedal.min_raw));
   float value = (pedal.filtered - static_cast<float>(pedal.min_raw)) / span;
@@ -25,9 +27,17 @@ float normalize(const PedalRuntime& pedal) {
 }
 
 void updatePedal(PedalRuntime& pedal) {
+  if (app::kSimulatePedals) {
+  const float normalized = (&pedal == &g_brake) ? app::kSimulatedBrakeNormalized : app::kSimulatedAccelNormalized;
+  const float clamped = constrain(normalized, 0.0f, 1.0f);
+  pedal.normalized = clamped;
+  pedal.filtered = clamped * kAdcMax;
+  pedal.raw = static_cast<uint16_t>(pedal.filtered);
+  } else {
   pedal.raw = analogRead(pedal.pin);
   pedal.filtered += (static_cast<float>(pedal.raw) - pedal.filtered) * 0.15f;
   pedal.normalized = normalize(pedal);
+  }
 }
 
 PedalChannelStatus toStatus(const PedalRuntime& pedal) {

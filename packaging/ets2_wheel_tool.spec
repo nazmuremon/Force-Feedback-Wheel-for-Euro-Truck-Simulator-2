@@ -11,6 +11,10 @@ datas = [
     (str(project_root / ".research" / "ets2-telemetry-server" / "server"), "ets2_telemetry_server"),
 ]
 
+binaries = [
+    (str(project_root / "release" / "ETS2WheelTool" / "_internal" / "hid.cp311-win_amd64.pyd"), "."),
+]
+
 hiddenimports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
@@ -36,7 +40,7 @@ block_cipher = None
 a = Analysis(
     [str(project_root / "pc_app" / "main.py")],
     pathex=[str(project_root / "pc_app")],
-    binaries=vg_binaries + hid_binaries,
+    binaries=binaries + vg_binaries + hid_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

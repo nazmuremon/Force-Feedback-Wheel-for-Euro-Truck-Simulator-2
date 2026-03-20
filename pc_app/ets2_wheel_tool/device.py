@@ -44,11 +44,11 @@ class DeviceManager(QObject):
     state_changed = Signal(object)
     log_message = Signal(str)
 
-    _FORCE_INTERVAL_S = 1.0 / 50.0
-    _STATUS_INTERVAL_S = 1.0 / 12.0
-    _FLOAT_EPSILON = 0.01
-    _CENTER_EPSILON_DEG = 0.5
-    _VIBRATION_FREQ_EPSILON_HZ = 0.5
+    _FORCE_INTERVAL_S = 1.0 / 333.0
+    _STATUS_INTERVAL_S = 1.0 / 20.0
+    _FLOAT_EPSILON = 0.005
+    _CENTER_EPSILON_DEG = 0.25
+    _VIBRATION_FREQ_EPSILON_HZ = 0.25
 
     def __init__(self) -> None:
         super().__init__()
